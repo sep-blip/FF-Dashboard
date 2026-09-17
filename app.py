@@ -1027,7 +1027,9 @@ with tab1:
                                 "amount": credit_val,
                                 "payer_or_source": desc_str or "Deposit",
                                 "tx_type": "credit",
-                                "source_file": f.name
+                                "source_file": f.name,
+                                "statement_id": file_statement_id,
+                                "source_page": page_num
                             })
 
                         if debit_val is not None and debit_val > 0:
@@ -1044,7 +1046,10 @@ with tab1:
                                         "lender": lender_name,
                                         "tier": tier,
                                         "payment_amount": debit_val,
-                                        "month": active_month
+                                        "month": active_month,
+                                        "statement_id": file_statement_id,
+                                        "source_file": f.name,
+                                        "source_page": page_num
                                     })
                                     is_mca = True
                                     break
@@ -1057,7 +1062,10 @@ with tab1:
                                     "lender": "Generic Loan/MCA",
                                     "tier": "Standard",
                                     "payment_amount": debit_val,
-                                    "month": active_month
+                                    "month": active_month,
+                                    "statement_id": file_statement_id,
+                                    "source_file": f.name,
+                                    "source_page": page_num
                                 })
 
                             if matches_any(NSF_REVERSAL_PATTERNS, desc_upper):
@@ -1072,7 +1080,9 @@ with tab1:
                                         "amount": debit_val,
                                         "payer_or_source": "Bank Fee",
                                         "tx_type": "debit",
-                                        "source_file": f.name
+                                        "source_file": f.name,
+                                        "statement_id": file_statement_id,
+                                        "source_page": page_num
                                     })
 
                 if needs_fallback:
@@ -1146,9 +1156,11 @@ with tab1:
         else:
             status_text.info("Step 2/3: Applying Classifications...")
             df = pd.DataFrame(all_deposits).reset_index(drop=True)
-            df["statement_id"] = df["source_file"].map(statement_ids_by_file)
 
-            lineage_keys = ["statement_id", "date", "amount", "description", "tx_type"]
+            lineage_keys = [
+                "statement_id", "date", "amount", "description",
+                "tx_type", "source_page"
+            ]
             df["_lineage_occurrence"] = df.groupby(
                 lineage_keys, dropna=False
             ).cumcount()
@@ -1159,6 +1171,11 @@ with tab1:
                     description=str(row["description"]),
                     amount=row["amount"],
                     direction=str(row["tx_type"]),
+                    page=(
+                        int(row["source_page"])
+                        if pd.notna(row.get("source_page"))
+                        else None
+                    ),
                     occurrence=int(row["_lineage_occurrence"]),
                 ),
                 axis=1,
@@ -1167,7 +1184,10 @@ with tab1:
 
             before_dedup = len(df)
             df = df.drop_duplicates(
-                subset=["date", "amount", "description", "tx_type"]
+                subset=[
+                    "statement_id", "date", "amount",
+                    "description", "tx_type", "source_page"
+                ]
             ).reset_index(drop=True)
 
             if before_dedup != len(df):
@@ -1178,7 +1198,10 @@ with tab1:
             mca_positions = []
             if all_mca_debits:
                 mca_df = pd.DataFrame(all_mca_debits).drop_duplicates(
-                    subset=["date", "lender", "payment_amount"]
+                    subset=[
+                        "statement_id", "date", "lender",
+                        "payment_amount", "source_page"
+                    ]
                 ).reset_index(drop=True)
                 mca_df["date"] = pd.to_datetime(mca_df["date"], errors="coerce")
                 mca_df = mca_df.dropna(subset=["date"])
