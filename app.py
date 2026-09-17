@@ -8,6 +8,7 @@ import re
 import hashlib
 from openai import OpenAI
 
+from engine_v2.ai_classifier import classify_unresolved_transactions
 from engine_v2.classification import classify_by_rules as v2_classify_by_rules
 from engine_v2.coverage import calculate_statement_coverage
 from engine_v2.identifiers import stable_statement_id, stable_transaction_id
@@ -25,6 +26,7 @@ except (FileNotFoundError, KeyError):
     api_key = st.sidebar.text_input("Enter OpenAI API Key (or configure secrets.toml)", type="password")
 
 client = OpenAI(api_key=api_key) if api_key else None
+CLASSIFIER_MODEL = "gpt-5.6-terra"
 
 # INDUSTRY SCORING DICTIONARY 
 INDUSTRY_SCORING = {
@@ -1217,70 +1219,63 @@ with tab1:
             st.session_state.mca_positions = mca_positions
 
             df["description_upper"] = df["description"].astype(str).str.upper()
-            df["category"] = df.apply(
+            rule_results = df.apply(
                 lambda row: v2_classify_by_rules(
                     str(row["description"]),
                     direction=str(row["tx_type"]),
-                ).category,
+                ),
                 axis=1,
             )
+            df["category"] = rule_results.apply(lambda result: result.category)
+            df["classification_source"] = rule_results.apply(
+                lambda result: "RULE" if result.category else "UNRESOLVED"
+            )
+            df["classification_reason"] = rule_results.apply(
+                lambda result: result.reason
+            )
+            df["classification_model"] = None
             unresolved_mask = df["category"].isna()
 
             if unresolved_mask.any() and client:
-                unresolved_df = df[unresolved_mask]
-                context_dict = (
-                    unresolved_df.groupby("description")["amount"].max().to_dict()
-                )
-                context_payload = [
-                    {"description": desc, "max_amount": amt}
-                    for desc, amt in context_dict.items()
-                ]
+                unresolved_rows = df.loc[
+                    unresolved_mask,
+                    [
+                        "transaction_id", "date", "description",
+                        "amount", "tx_type"
+                    ],
+                ].to_dict("records")
 
                 try:
-                    ai_response = client.chat.completions.create(
-                        model="gpt-4o-mini",
-                        messages=[
-                            {
-                                "role": "system",
-                                "content": (
-                                    "You map bank transaction descriptions to strict categories. "
-                                    "Use the provided max_amount to add context. Unknown ≠ Revenue. "
-                                    "Unknown = Review Required. A $50,000 unexplained transfer should "
-                                    "NEVER be true revenue. Map ONLY to the exact allowed enum categories."
-                                )
-                            },
-                            {"role": "user", "content": json.dumps(context_payload)}
-                        ],
-                        temperature=0.0,
-                        response_format=CATEGORIZATION_SCHEMA,
-                        timeout=30.0
+                    decisions = classify_unresolved_transactions(
+                        client=client,
+                        rows=unresolved_rows,
+                        model=CLASSIFIER_MODEL,
                     )
-
-                    raw_json = json.loads(
-                        ai_response.choices[0].message.content
-                    )
-                    category_map = {
-                        str(i["description"]).strip().upper(): i["category"]
-                        for i in raw_json.get("mappings", [])
-                    }
-                    df.loc[unresolved_mask, "category"] = (
-                        df.loc[unresolved_mask, "description"].apply(
-                            lambda x: category_map.get(
-                                str(x).strip().upper(),
-                                "Review Required - Unidentified / Unusual Deposit"
-                            )
-                        )
-                    )
+                    for row_idx in df.index[unresolved_mask]:
+                        transaction_id = str(df.at[row_idx, "transaction_id"])
+                        decision = decisions[transaction_id]
+                        df.at[row_idx, "category"] = decision.category
+                        df.at[row_idx, "classification_source"] = "AI"
+                        df.at[row_idx, "classification_reason"] = decision.reason
+                        df.at[row_idx, "classification_model"] = decision.model_name
                 except Exception as exc:
                     st.session_state.diagnostic_log.append(
-                        f"AI classification fallback used: {exc}"
+                        f"AI classification failed closed to manual review: {exc}"
                     )
                     df.loc[unresolved_mask, "category"] = (
                         "Review Required - Unidentified / Unusual Deposit"
                     )
+                    df.loc[unresolved_mask, "classification_source"] = "FALLBACK"
+                    df.loc[unresolved_mask, "classification_reason"] = (
+                        "AI classification unavailable; manual review required."
+                    )
             elif unresolved_mask.any():
                 df.loc[unresolved_mask, "category"] = (
                     "Review Required - Unidentified / Unusual Deposit"
+                )
+                df.loc[unresolved_mask, "classification_source"] = "FALLBACK"
+                df.loc[unresolved_mask, "classification_reason"] = (
+                    "No AI client configured; manual review required."
                 )
 
             df.drop(columns=["description_upper"], inplace=True)
