@@ -3,3 +3,4 @@ pandas
 plotly
 pdfplumber
 openai
+pydantic>=2.7,<3
