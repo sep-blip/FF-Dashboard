@@ -1430,7 +1430,8 @@ with tab1:
 
         display_cols = [
             "date", "month", "description", "amount", "payer_or_source",
-            "tx_type", "category", "is_revenue", "needs_review"
+            "tx_type", "category", "classification_source",
+            "classification_reason", "is_revenue", "needs_review"
         ]
         display_cols = [
             c for c in display_cols if c in filtered_df.columns
@@ -1449,13 +1450,20 @@ with tab1:
                 "date": st.column_config.TextColumn("Date"),
                 "month": st.column_config.TextColumn("Month"),
                 "category": st.column_config.TextColumn("Category"),
+                "classification_source": st.column_config.TextColumn(
+                    "Classified By", disabled=True
+                ),
+                "classification_reason": st.column_config.TextColumn(
+                    "Classification Reason", disabled=True
+                ),
                 "payer_or_source": st.column_config.TextColumn("Payer / Source"),
                 "description": st.column_config.TextColumn("Description"),
                 "tx_type": st.column_config.TextColumn("Type", disabled=True),
             },
             disabled=[
                 "date", "month", "amount", "description",
-                "payer_or_source", "category", "tx_type"
+                "payer_or_source", "category", "tx_type",
+                "classification_source", "classification_reason"
             ],
             width="stretch",
             num_rows="dynamic",
@@ -1644,6 +1652,39 @@ with tab1:
 with tab2:
     if st.session_state.transactions is not None and not st.session_state.transactions.empty:
         st.header("🏦 Bank Statement Summary")
+
+        if st.session_state.get("statement_coverage"):
+            st.markdown("#### Statement Coverage")
+            coverage_df = pd.DataFrame(st.session_state.statement_coverage)
+            coverage_cols = [
+                "source_file", "period_start", "period_end",
+                "coverage_pct", "status", "warning"
+            ]
+            coverage_cols = [
+                col for col in coverage_cols if col in coverage_df.columns
+            ]
+            st.dataframe(
+                coverage_df[coverage_cols],
+                width="stretch",
+                hide_index=True,
+            )
+
+        if st.session_state.get("pdf_integrity_reports"):
+            st.markdown("#### PDF Integrity Triage")
+            integrity_df = pd.DataFrame(st.session_state.pdf_integrity_reports)
+            integrity_cols = [
+                "source_file", "score", "status", "page_count"
+            ]
+            st.dataframe(
+                integrity_df[integrity_cols],
+                width="stretch",
+                hide_index=True,
+            )
+            st.caption(
+                "Integrity scores are review signals only. They do not establish "
+                "that a statement is fraudulent or altered."
+            )
+
         df = st.session_state.transactions
         mca_df_raw = pd.DataFrame(st.session_state.mca_positions)
 
