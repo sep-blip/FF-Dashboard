@@ -957,6 +957,10 @@ with tab1:
                                 month_value = f"{year}-{m_str}"
                                 is_date_row = True
 
+                        if is_date_row:
+                            active_date = date_value
+                            active_month = month_value
+
                         has_currency = bool(re.search(r'\d+\.\d{2}', full_line))
                         if not (is_date_row or (active_date and has_currency)):
                             continue
