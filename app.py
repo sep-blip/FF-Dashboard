@@ -12,6 +12,7 @@ from engine_v2.classification import classify_by_rules as v2_classify_by_rules
 from engine_v2.coverage import calculate_statement_coverage
 from engine_v2.identifiers import stable_statement_id, stable_transaction_id
 from engine_v2.period import extract_statement_period
+from engine_v2.pdf_integrity import analyze_pdf_integrity
 
 
 st.set_page_config(page_title="Forward Funding - Underwriting Tool", layout="wide")
@@ -271,6 +272,8 @@ if 'file_signatures' not in st.session_state:
     st.session_state.file_signatures = {}
 if 'statement_coverage' not in st.session_state:
     st.session_state.statement_coverage = []
+if 'pdf_integrity_reports' not in st.session_state:
+    st.session_state.pdf_integrity_reports = []
 
 
 # ==============================================================================
@@ -669,6 +672,7 @@ with tab1:
         skipped_duplicate_files = []
         statement_ids_by_file = {}
         coverage_records = []
+        pdf_integrity_records = []
 
         status_text.info("Step 1/3: Parsing Statements...")
 
@@ -686,6 +690,36 @@ with tab1:
                 continue
 
             file_hashes_seen[file_hash] = f.name
+            file_statement_id = stable_statement_id(file_sha256=file_hash)
+            statement_ids_by_file[f.name] = file_statement_id
+
+            pdf_integrity = analyze_pdf_integrity(pdf_bytes)
+            pdf_integrity_records.append({
+                "source_file": f.name,
+                "statement_id": file_statement_id,
+                "score": pdf_integrity.score,
+                "status": pdf_integrity.status,
+                "page_count": pdf_integrity.page_count,
+                "findings": [
+                    {
+                        "code": finding.code,
+                        "severity": finding.severity.value,
+                        "message": finding.message,
+                        "evidence": finding.evidence,
+                    }
+                    for finding in pdf_integrity.findings
+                ],
+            })
+            if pdf_integrity.status != "LOW_CONCERN":
+                st.session_state.diagnostic_log.append(
+                    f"⚠️ {f.name}: PDF integrity score {pdf_integrity.score}/100 "
+                    f"({pdf_integrity.status}). Structural review recommended."
+                )
+            for finding in pdf_integrity.findings:
+                st.session_state.diagnostic_log.append(
+                    f"PDF integrity [{finding.severity.value}] {f.name} "
+                    f"{finding.code}: {finding.message}"
+                )
 
             full_pdf_text, text_errors = safe_pdf_text(pdf_bytes)
             for err in text_errors:
@@ -698,9 +732,6 @@ with tab1:
                 )
                 progress_bar.progress((f_idx + 1) / len(uploaded_files))
                 continue
-
-            file_statement_id = stable_statement_id(file_sha256=file_hash)
-            statement_ids_by_file[f.name] = file_statement_id
 
             period_detection = extract_statement_period(full_pdf_text)
             if period_detection.period_start and period_detection.period_end:
@@ -1069,6 +1100,7 @@ with tab1:
 
         st.session_state.expected_credits = total_anchor_credits
         st.session_state.statement_coverage = coverage_records
+        st.session_state.pdf_integrity_reports = pdf_integrity_records
 
         partial_count = sum(1 for row in coverage_records if row["status"] == "PARTIAL")
         unknown_count = sum(1 for row in coverage_records if row["status"] == "UNKNOWN")
@@ -1082,6 +1114,17 @@ with tab1:
             st.info(
                 f"ℹ️ Could not verify the exact statement period for {unknown_count} file(s). "
                 "Those files are processed, but completeness remains UNKNOWN."
+            )
+
+        integrity_review_count = sum(
+            1 for row in pdf_integrity_records
+            if row.get("status") != "LOW_CONCERN"
+        )
+        if integrity_review_count:
+            st.warning(
+                f"🛡️ {integrity_review_count} statement file(s) contain structural "
+                "integrity signals that warrant manual review. These signals are not "
+                "proof of fraud; see Extraction Diagnostics for the evidence."
             )
 
         if skipped_duplicate_files:
