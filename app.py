@@ -2005,6 +2005,10 @@ with tab3:
         pts_count = 5 if auto_deposit_count >= 40 else 4 if auto_deposit_count >= 20 else 3 if auto_deposit_count >= 10 else 2 if auto_deposit_count >= 5 else 0
         pts_vol = 5 if auto_rev_volatility <= 10 else 4 if auto_rev_volatility <= 20 else 3 if auto_rev_volatility <= 30 else 2 if auto_rev_volatility <= 40 else 1 if auto_rev_volatility <= 50 else 0
 
+        # These four cash-flow components were previously calculated but never
+        # added to the score, materially understating otherwise strong deals.
+        score += pts_rev + pts_trend + pts_count + pts_vol
+
         adb_pct = (avg_daily_balance / auto_avg_true_rev * 100) if auto_avg_true_rev > 0 else 0
         score += 5 if adb_pct >= 10 else 4 if adb_pct >= 7 else 3 if adb_pct >= 4 else 2 if adb_pct >= 2 else 1 if adb_pct >= 1 else 0
 
