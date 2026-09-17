@@ -11,6 +11,7 @@ from openai import OpenAI
 from engine_v2.ai_classifier import classify_unresolved_transactions
 from engine_v2.classification import classify_by_rules as v2_classify_by_rules
 from engine_v2.coverage import calculate_statement_coverage
+from engine_v2.credit_extraction import extract_credit_profile
 from engine_v2.identifiers import stable_statement_id, stable_transaction_id
 from engine_v2.period import extract_statement_period
 from engine_v2.pdf_integrity import analyze_pdf_integrity
@@ -27,6 +28,7 @@ except (FileNotFoundError, KeyError):
 
 client = OpenAI(api_key=api_key) if api_key else None
 CLASSIFIER_MODEL = "gpt-5.6-terra"
+CREDIT_MODEL = "gpt-5.6-sol"
 
 # INDUSTRY SCORING DICTIONARY 
 INDUSTRY_SCORING = {
@@ -257,15 +259,18 @@ if 'expected_credits' not in st.session_state:
     st.session_state.expected_credits = 0.0
 if 'credit_profile' not in st.session_state:
     st.session_state.credit_profile = {
-        "owner_name": "Unknown",
-        "fico_score": 650,
-        "total_high_credit": 0.0,
-        "revolving_credit_utilization_pct": 0.0,
-        "active_collections_count": 0,
-        "total_collections_amount": 0.0,
-        "bankruptcies_found": False,
-        "number_of_mortgages": 0,
-        "mortgage_ltv_details": "N/A",
+        "owner_name": None,
+        "fico_score": None,
+        "total_high_credit": None,
+        "revolving_credit_utilization_pct": None,
+        "active_collections_count": None,
+        "total_collections_amount": None,
+        "bankruptcies_found": None,
+        "number_of_mortgages": None,
+        "mortgage_ltv_details": None,
+        "evidence": {},
+        "warnings": [],
+        "model_name": None,
         "is_loaded": False
     }
 if 'diagnostic_log' not in st.session_state:
@@ -629,34 +634,28 @@ with tab1:
                     )
                 else:
                     try:
-                        credit_response = client.chat.completions.create(
-                            model="gpt-4o-mini",
-                            messages=[
-                                {
-                                    "role": "system",
-                                    "content": (
-                                        "You extract key underwriting metrics from raw credit bureau PDFs. "
-                                        "Check the Credit Portfolio Insights table for utilization and mortgage counts. "
-                                        "Do not hallucinate property values for LTV if missing. "
-                                        "For total_high_credit, extract ONLY the exact value shown for "
-                                        "'High Credit' or 'HighCred'. DO NOT sum limits together."
-                                    )
-                                },
-                                {"role": "user", "content": credit_text}
-                            ],
-                            temperature=0.0,
-                            response_format=CREDIT_REPORT_SCHEMA,
-                            timeout=30.0
+                        profile = extract_credit_profile(
+                            client=client,
+                            credit_text=credit_text,
+                            model=CREDIT_MODEL,
                         )
-                        raw_credit = json.loads(
-                            credit_response.choices[0].message.content
-                        )
+                        raw_credit = profile.model_dump()
                         raw_credit["is_loaded"] = True
                         st.session_state.credit_profile = raw_credit
-                        st.success(
-                            f"✅ Credit Profile Loaded for: {raw_credit['owner_name']} "
-                            f"(FICO: {raw_credit['fico_score']})"
+
+                        fico_label = (
+                            str(profile.fico_score)
+                            if profile.fico_score is not None
+                            else "not found"
                         )
+                        st.success(
+                            f"✅ Credit Profile Loaded for: "
+                            f"{profile.owner_name or 'Unknown owner'} "
+                            f"(FICO: {fico_label})"
+                        )
+                        if profile.warnings:
+                            for warning in profile.warnings:
+                                st.warning(f"Credit extraction: {warning}")
                     except Exception as exc:
                         st.error(f"Error extracting credit report: {exc}")
 
@@ -1718,27 +1717,78 @@ with tab3:
 
     cp = st.session_state.credit_profile
     default_public_records = "Clean"
-    if cp["bankruptcies_found"]:
+    if cp.get("bankruptcies_found") is True:
         default_public_records = "Severe"
-    elif cp["active_collections_count"] > 0:
+    elif (cp.get("active_collections_count") or 0) > 0:
         default_public_records = "Moderate"
 
     st.markdown("---")
     st.subheader("👤 Owner Credit Profile (Bureau Data)")
+
+    fico_display = cp.get("fico_score")
+    fico_display = fico_display if fico_display is not None else "Not found"
+    util_display = (
+        f"{cp.get('revolving_credit_utilization_pct')}%"
+        if cp.get("revolving_credit_utilization_pct") is not None
+        else "Not found"
+    )
+    high_credit_display = (
+        f"${cp.get('total_high_credit'):,.2f}"
+        if cp.get("total_high_credit") is not None
+        else "Not found"
+    )
+    collections_count_display = (
+        cp.get("active_collections_count")
+        if cp.get("active_collections_count") is not None
+        else "Not found"
+    )
+    collections_amount_display = (
+        f"${cp.get('total_collections_amount'):,.2f}"
+        if cp.get("total_collections_amount") is not None
+        else "Not found"
+    )
+    mortgage_count_display = (
+        cp.get("number_of_mortgages")
+        if cp.get("number_of_mortgages") is not None
+        else "Not found"
+    )
+
     c_col1, c_col2, c_col3, c_col4 = st.columns(4)
     with c_col1:
-        st.metric("Owner Name", cp["owner_name"])
-        st.metric("FICO Score", cp["fico_score"])
+        st.metric("Owner Name", cp.get("owner_name") or "Not found")
+        st.metric("FICO Score", fico_display)
     with c_col2:
-        st.metric("Revolving Utilization", f"{cp['revolving_credit_utilization_pct']}%")
-        st.metric("Reported High Credit", f"${cp['total_high_credit']:,.2f}")
+        st.metric("Revolving Utilization", util_display)
+        st.metric("Reported High Credit", high_credit_display)
     with c_col3:
-        col_color = "normal" if cp["active_collections_count"] == 0 else "inverse"
-        st.metric("Active Collections", cp["active_collections_count"], delta="Review Required" if cp["active_collections_count"] > 0 else "Clean", delta_color=col_color)
-        st.metric("Collections Amount", f"${cp['total_collections_amount']:,.2f}")
+        active_collections = cp.get("active_collections_count")
+        col_color = (
+            "normal"
+            if active_collections in (None, 0)
+            else "inverse"
+        )
+        st.metric(
+            "Active Collections",
+            collections_count_display,
+            delta=(
+                "Review Required"
+                if (active_collections or 0) > 0
+                else ("Not extracted" if active_collections is None else "Clean")
+            ),
+            delta_color=col_color,
+        )
+        st.metric("Collections Amount", collections_amount_display)
     with c_col4:
-        st.metric("Active Mortgages", cp["number_of_mortgages"])
-        st.caption(f"**LTV Details:** {cp['mortgage_ltv_details']}")
+        st.metric("Active Mortgages", mortgage_count_display)
+        st.caption(
+            f"**LTV Details:** {cp.get('mortgage_ltv_details') or 'Not found'}"
+        )
+
+    if cp.get("is_loaded") and cp.get("fico_score") is None:
+        st.warning(
+            "The credit report was processed, but no explicit FICO/Beacon score "
+            "was found. The underwriting input below remains a manual field."
+        )
 
     st.markdown("---")
     st.warning("###  MANUAL INPUT REQUIRED\n**These critical fields require human verification or external API integrations.**")
@@ -1747,7 +1797,18 @@ with tab3:
         time_in_biz = st.number_input("Time in Business (months)", min_value=0, max_value=1000, value=24)
         avg_daily_balance = st.number_input("Average Daily Balance (ADB) $", value=0.0)
     with m_col2:
-        credit_score = st.number_input("Owner Credit Score (300-900)", min_value=300, max_value=900, value=int(cp["fico_score"]))
+        extracted_credit_score = cp.get("fico_score")
+        credit_score = st.number_input(
+            "Owner Credit Score (300-900)",
+            min_value=300,
+            max_value=900,
+            value=int(extracted_credit_score) if extracted_credit_score is not None else 650,
+            help=(
+                "Uses the explicitly extracted bureau score when available. "
+                "If no score was extracted, 650 is only an editable UI starting "
+                "value and is not treated as verified bureau data."
+            ),
+        )
         negative_days = st.number_input("Actual Negative Days (Statement Count)", value=0)
     with m_col3:
         public_records = st.selectbox(
