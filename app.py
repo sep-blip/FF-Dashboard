@@ -8,6 +8,11 @@ import re
 import hashlib
 from openai import OpenAI
 
+from engine_v2.classification import classify_by_rules as v2_classify_by_rules
+from engine_v2.coverage import calculate_statement_coverage
+from engine_v2.identifiers import stable_statement_id, stable_transaction_id
+from engine_v2.period import extract_statement_period
+
 
 st.set_page_config(page_title="Forward Funding - Underwriting Tool", layout="wide")
 st.title("📊 Forward Funding: Underwriting Tool")
@@ -264,6 +269,8 @@ if 'diagnostic_log' not in st.session_state:
     st.session_state.diagnostic_log = []
 if 'file_signatures' not in st.session_state:
     st.session_state.file_signatures = {}
+if 'statement_coverage' not in st.session_state:
+    st.session_state.statement_coverage = []
 
 
 # ==============================================================================
@@ -660,6 +667,8 @@ with tab1:
 
         file_hashes_seen = {}
         skipped_duplicate_files = []
+        statement_ids_by_file = {}
+        coverage_records = []
 
         status_text.info("Step 1/3: Parsing Statements...")
 
@@ -689,6 +698,63 @@ with tab1:
                 )
                 progress_bar.progress((f_idx + 1) / len(uploaded_files))
                 continue
+
+            file_statement_id = stable_statement_id(file_sha256=file_hash)
+            statement_ids_by_file[f.name] = file_statement_id
+
+            period_detection = extract_statement_period(full_pdf_text)
+            if period_detection.period_start and period_detection.period_end:
+                coverage = calculate_statement_coverage(
+                    statement_id=file_statement_id,
+                    period_start=period_detection.period_start,
+                    period_end=period_detection.period_end,
+                    transaction_dates=[],
+                )
+                coverage_month = (
+                    period_detection.period_start.strftime("%Y-%m")
+                    if (
+                        period_detection.period_start.year == period_detection.period_end.year
+                        and period_detection.period_start.month == period_detection.period_end.month
+                    )
+                    else None
+                )
+                coverage_records.append({
+                    "source_file": f.name,
+                    "statement_id": file_statement_id,
+                    "month": coverage_month,
+                    "period_start": str(period_detection.period_start),
+                    "period_end": str(period_detection.period_end),
+                    "expected_days": coverage.expected_days,
+                    "observed_days": coverage.observed_days,
+                    "coverage_pct": coverage.coverage_pct,
+                    "status": coverage.status.value,
+                    "warning": coverage.warning,
+                })
+                if coverage.warning:
+                    st.session_state.diagnostic_log.append(
+                        f"⚠️ {f.name}: {coverage.warning}"
+                    )
+                else:
+                    st.session_state.diagnostic_log.append(
+                        f"✅ {f.name}: Statement period verified as complete "
+                        f"({period_detection.period_start} to {period_detection.period_end})."
+                    )
+            else:
+                coverage_records.append({
+                    "source_file": f.name,
+                    "statement_id": file_statement_id,
+                    "month": None,
+                    "period_start": None,
+                    "period_end": None,
+                    "expected_days": None,
+                    "observed_days": None,
+                    "coverage_pct": None,
+                    "status": "UNKNOWN",
+                    "warning": period_detection.warning,
+                })
+                st.session_state.diagnostic_log.append(
+                    f"⚠️ {f.name}: {period_detection.warning}"
+                )
 
             doc, open_error = open_pdf_safely(pdf_bytes)
             if doc is None:
@@ -1002,6 +1068,21 @@ with tab1:
             progress_bar.progress((f_idx + 1) / len(uploaded_files))
 
         st.session_state.expected_credits = total_anchor_credits
+        st.session_state.statement_coverage = coverage_records
+
+        partial_count = sum(1 for row in coverage_records if row["status"] == "PARTIAL")
+        unknown_count = sum(1 for row in coverage_records if row["status"] == "UNKNOWN")
+        if partial_count:
+            st.warning(
+                f"⚠️ {partial_count} partial statement(s) detected. Observed values are retained, "
+                "but partial months are excluded from the underwriting revenue average when "
+                "complete months are available."
+            )
+        if unknown_count:
+            st.info(
+                f"ℹ️ Could not verify the exact statement period for {unknown_count} file(s). "
+                "Those files are processed, but completeness remains UNKNOWN."
+            )
 
         if skipped_duplicate_files:
             st.warning(
@@ -1017,6 +1098,24 @@ with tab1:
         else:
             status_text.info("Step 2/3: Applying Classifications...")
             df = pd.DataFrame(all_deposits).reset_index(drop=True)
+            df["statement_id"] = df["source_file"].map(statement_ids_by_file)
+
+            lineage_keys = ["statement_id", "date", "amount", "description", "tx_type"]
+            df["_lineage_occurrence"] = df.groupby(
+                lineage_keys, dropna=False
+            ).cumcount()
+            df["transaction_id"] = df.apply(
+                lambda row: stable_transaction_id(
+                    statement_id=str(row["statement_id"]),
+                    transaction_date=str(row["date"]),
+                    description=str(row["description"]),
+                    amount=row["amount"],
+                    direction=str(row["tx_type"]),
+                    occurrence=int(row["_lineage_occurrence"]),
+                ),
+                axis=1,
+            )
+            df.drop(columns=["_lineage_occurrence"], inplace=True)
 
             before_dedup = len(df)
             df = df.drop_duplicates(
@@ -1075,8 +1174,12 @@ with tab1:
             st.session_state.mca_positions = mca_positions
 
             df["description_upper"] = df["description"].astype(str).str.upper()
-            df["category"] = df["description_upper"].apply(
-                lambda d: rule_based_category(d)
+            df["category"] = df.apply(
+                lambda row: v2_classify_by_rules(
+                    str(row["description"]),
+                    direction=str(row["tx_type"]),
+                ).category,
+                axis=1,
             )
             unresolved_mask = df["category"].isna()
 
@@ -1594,6 +1697,7 @@ with tab3:
     auto_mca_positions = 0
     auto_mca_burden_pct = 0.0
     auto_payment_perf = 0
+    partial_months_excluded = 0
     gross_deposits = 0.0
     median_deposit = 0.0
     largest_deposit = 0.0
@@ -1608,19 +1712,60 @@ with tab3:
         median_deposit = all_deposits_df['amount'].median() if not all_deposits_df.empty else 0.0
         largest_deposit = all_deposits_df['amount'].max() if not all_deposits_df.empty else 0.0
 
-        monthly_rev_series = rev_tx.groupby("month")["amount"].sum()
-        monthly_count_series = rev_tx.groupby("month")["amount"].count()
-        num_months = len(df["month"].unique()) if len(df["month"].unique()) > 0 else 1
+        monthly_rev_series = rev_tx.groupby("month")["amount"].sum().sort_index()
+        monthly_count_series = rev_tx.groupby("month")["amount"].count().sort_index()
 
-        auto_avg_true_rev = float(monthly_rev_series.mean()) if not monthly_rev_series.empty else 0.0
-        auto_deposit_count = int(round(monthly_count_series.mean())) if not monthly_count_series.empty else 0
+        coverage_by_month = {
+            row.get("month"): row
+            for row in st.session_state.get("statement_coverage", [])
+            if row.get("month")
+        }
+        complete_months = {
+            month
+            for month, row in coverage_by_month.items()
+            if row.get("status") == "COMPLETE"
+        }
+        partial_months = {
+            month
+            for month, row in coverage_by_month.items()
+            if row.get("status") == "PARTIAL"
+        }
+
+        underwriting_rev_series = monthly_rev_series
+        underwriting_count_series = monthly_count_series
+        if complete_months:
+            underwriting_rev_series = monthly_rev_series[
+                monthly_rev_series.index.isin(complete_months)
+            ]
+            underwriting_count_series = monthly_count_series[
+                monthly_count_series.index.isin(complete_months)
+            ]
+            partial_months_excluded = len(
+                set(monthly_rev_series.index).intersection(partial_months)
+            )
+
+        num_months = len(underwriting_rev_series) if len(underwriting_rev_series) > 0 else 1
+
+        auto_avg_true_rev = (
+            float(underwriting_rev_series.mean())
+            if not underwriting_rev_series.empty else 0.0
+        )
+        auto_deposit_count = (
+            int(round(underwriting_count_series.mean()))
+            if not underwriting_count_series.empty else 0
+        )
 
         if num_months > 1 and auto_avg_true_rev > 0:
-            auto_rev_volatility = float((monthly_rev_series.std() / auto_avg_true_rev) * 100)
-        if len(monthly_rev_series) >= 2:
-            m_start = monthly_rev_series.iloc[0]
-            m_end = monthly_rev_series.iloc[-1]
-            auto_trend_pct = float(((m_end - m_start) / m_start) * 100) if m_start > 0 else 0.0
+            auto_rev_volatility = float(
+                (underwriting_rev_series.std() / auto_avg_true_rev) * 100
+            )
+        if len(underwriting_rev_series) >= 2:
+            m_start = underwriting_rev_series.iloc[0]
+            m_end = underwriting_rev_series.iloc[-1]
+            auto_trend_pct = (
+                float(((m_end - m_start) / m_start) * 100)
+                if m_start > 0 else 0.0
+            )
 
         total_rev = rev_tx["amount"].sum()
         if total_rev > 0:
@@ -1640,6 +1785,12 @@ with tab3:
         auto_payment_perf = len(nsf_df[nsf_df['tx_type'] == 'debit']) + len(nsf_df[nsf_df['tx_type'] == 'credit'])
 
     st.success("### 🤖 AUTOMATED FINANCIAL metrics \n**These fields are dynamically calculated by the transaction ledger.**")
+    if partial_months_excluded:
+        st.warning(
+            f"⚠️ {partial_months_excluded} partial month(s) were excluded from "
+            "Avg Monthly True Revenue, trend, volatility, and average deposit count. "
+            "Their observed transactions remain visible in the ledger and Bank Summary."
+        )
     a_col1, a_col2, a_col3, a_col4 = st.columns(4)
 
     with a_col1:
