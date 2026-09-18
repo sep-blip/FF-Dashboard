@@ -1,15 +1,16 @@
 # Local V2 stack
 
-The V2 stack can now run as three services:
+The local V2 stack contains two services:
 
-- PostgreSQL for application, ledger, metric, offer and audit records
-- FastAPI for document analysis and underwriting services
+- FastAPI for document analysis and underwriting calculations
 - React/Vite dashboard served as a static web application
+
+No SQL database is required.
 
 ## Start
 
-Copy .env.example to .env and add an OpenAI API key if AI classification is
-required. The deterministic parser and rules still run without a key.
+Copy .env.example to .env and add an OpenAI API key if AI classification or
+vision fallback is required.
 
 Then run:
 
@@ -21,13 +22,17 @@ Open:
 - API docs: http://localhost:8000/docs
 - API health: http://localhost:8000/health
 
-The API container initializes the current database schema on startup.
+## Document handling
 
-## Data durability
+The stateless API processes uploaded documents in memory and returns the
+analysis directly to the client. The React dashboard can download the complete
+analysis, including its audit manifest, as JSON.
 
-PostgreSQL data is stored in the postgres_data Docker volume. Uploaded
-statements are stored in the statement_uploads volume in local development.
+Real bank statements and credit reports must not be committed to Git.
 
-For a real deployment, set OBJECT_STORAGE_BACKEND=s3 and configure a private
-S3-compatible bucket. Raw bank statements should not be committed to Git or
-stored in a public web directory.
+## OCR
+
+The API container includes Tesseract English and French language support.
+Native positioned PDF extraction is attempted first. OCR is used only when
+enabled and native positioned words are unavailable. Vision fallback can then
+be used for remaining unreadable pages when an OpenAI API key is configured.
