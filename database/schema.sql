@@ -106,6 +106,7 @@ CREATE TABLE IF NOT EXISTS mca_positions (
     last_observed_date DATE,
     observed_payments INTEGER NOT NULL DEFAULT 1,
     status TEXT NOT NULL DEFAULT 'ACTIVE',
+    source TEXT NOT NULL DEFAULT 'AUTO',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     CHECK (payment_amount >= 0),
     CHECK (monthly_payment >= 0)
