@@ -244,13 +244,13 @@ class UnderwritingRepository:
                         statement.reconciliation_variance,
                         statement.reconciliation_status,
                         (
-                            statement.integrity.score
-                            if statement.integrity
+                            (statement.composite_integrity or statement.integrity).score
+                            if (statement.composite_integrity or statement.integrity)
                             else None
                         ),
                         (
-                            statement.integrity.status
-                            if statement.integrity
+                            (statement.composite_integrity or statement.integrity).status
+                            if (statement.composite_integrity or statement.integrity)
                             else None
                         ),
                     ),
