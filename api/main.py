@@ -8,6 +8,10 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAI
 
+from api.upload_policy import (
+    max_statement_files,
+    validate_pdf_upload,
+)
 from engine_v2.credit_extraction import extract_credit_profile
 from engine_v2.funding import FundingPolicy, calculate_funding_capacity
 from engine_v2.metrics import select_revenue_baseline
@@ -77,14 +81,24 @@ def _optional_openai_client() -> OpenAI | None:
 
 
 async def _read_uploads(files: list[UploadFile]) -> list[tuple[str, bytes]]:
+    if len(files) > max_statement_files():
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"Too many statement files: {len(files)}. "
+                f"Configured limit is {max_statement_files()}."
+            ),
+        )
+
     payloads: list[tuple[str, bytes]] = []
     for upload in files:
-        payloads.append(
-            (
-                upload.filename or "statement.pdf",
-                await upload.read(),
-            )
+        filename = upload.filename or "statement.pdf"
+        payload = await upload.read()
+        validate_pdf_upload(
+            filename=filename,
+            payload=payload,
         )
+        payloads.append((filename, payload))
     return payloads
 
 
@@ -459,6 +473,10 @@ async def analyze_credit_report(
         )
 
     payload = await file.read()
+    validate_pdf_upload(
+        filename=file.filename or "credit-report.pdf",
+        payload=payload,
+    )
     text, diagnostics = extract_text_with_fallbacks(
         payload,
         enable_ocr=enable_ocr,
