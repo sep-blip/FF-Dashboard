@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .ai_classifier import classify_unresolved_transactions
+from .audit_manifest import AuditManifest, build_audit_manifest
 from .batch_ingestion import BatchIngestionResult, parse_statement_batch
 from .classification import classify_by_rules
 from .constants import REVIEW_REQUIRED
@@ -45,6 +46,7 @@ class UnderwritingPipelineResult:
     revenue_baseline: RevenueBaseline | None = None
     debt_ratios: DebtRatioMetrics | None = None
     decision_readiness: DecisionReadiness | None = None
+    audit_manifest: AuditManifest | None = None
     skipped_duplicates: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
@@ -115,6 +117,13 @@ def analyze_statement_files(
     result = UnderwritingPipelineResult(
         statements=batch.statements,
         skipped_duplicates=batch.skipped_duplicates,
+    )
+    result.audit_manifest = build_audit_manifest(
+        statements=batch.statements,
+        classifier_model=classifier_model,
+        vision_model=vision_model,
+        enable_ocr=enable_ocr,
+        enable_vision_fallback=enable_vision_fallback,
     )
 
     unresolved_payload: list[dict] = []
