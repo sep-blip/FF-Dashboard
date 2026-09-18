@@ -36,3 +36,16 @@ The API container includes Tesseract English and French language support.
 Native positioned PDF extraction is attempted first. OCR is used only when
 enabled and native positioned words are unavailable. Vision fallback can then
 be used for remaining unreadable pages when an OpenAI API key is configured.
+
+
+## Upload safeguards
+
+The API validates PDFs before parser/model work. Defaults are:
+
+- maximum 24 bank-statement files per request;
+- maximum 25 MiB per PDF;
+- maximum 100 pages per PDF;
+- valid PDF header and readable PDF structure required.
+
+Override the limits with MAX_STATEMENT_FILES, MAX_PDF_BYTES, and
+MAX_PDF_PAGES.
