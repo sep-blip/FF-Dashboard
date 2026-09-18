@@ -321,7 +321,13 @@ def extract_text_with_fallbacks(pdf_bytes: bytes, *, enable_ocr: bool = False) -
                 try:
                     pix = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
                     image = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-                    pages.append(pytesseract.image_to_string(image, config="--psm 6") or "")
+                    pages.append(
+                        pytesseract.image_to_string(
+                            image,
+                            lang="eng+fra",
+                            config="--psm 6",
+                        ) or ""
+                    )
                 except Exception as exc:
                     diagnostics.append(f"Page {page_no}: OCR failed: {exc}")
             pdf.close()
