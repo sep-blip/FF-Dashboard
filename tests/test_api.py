@@ -1,9 +1,18 @@
+import fitz
 from fastapi.testclient import TestClient
 
 from api.main import app
 
 
 client = TestClient(app)
+
+
+def _blank_pdf_bytes() -> bytes:
+    pdf = fitz.open()
+    pdf.new_page(width=612, height=792)
+    payload = pdf.tobytes()
+    pdf.close()
+    return payload
 
 
 def test_health():
@@ -58,7 +67,7 @@ def test_statement_analysis_endpoint_degrades_gracefully_without_ai():
     response = client.post(
         "/v1/documents/bank-statements/analyze",
         files=[
-            ("files", ("statement.pdf", b"not-a-real-pdf", "application/pdf")),
+            ("files", ("statement.pdf", _blank_pdf_bytes(), "application/pdf")),
         ],
         data={
             "enable_ocr": "false",
@@ -73,7 +82,7 @@ def test_statement_analysis_endpoint_degrades_gracefully_without_ai():
 
 
 def test_statement_analysis_endpoint_skips_duplicate_uploads():
-    payload = b"duplicate-bytes"
+    payload = _blank_pdf_bytes()
     response = client.post(
         "/v1/documents/bank-statements/analyze",
         files=[
@@ -87,6 +96,19 @@ def test_statement_analysis_endpoint_skips_duplicate_uploads():
     assert len(body["statements"]) == 1
     assert len(body["skipped_duplicates"]) == 1
 
+
+def test_statement_analysis_rejects_non_pdf_content():
+    response = client.post(
+        "/v1/documents/bank-statements/analyze",
+        files=[
+            (
+                "files",
+                ("fake.pdf", b"not-a-real-pdf", "application/pdf"),
+            ),
+        ],
+        data={"use_ai_classifier": "false"},
+    )
+    assert response.status_code == 415
 
 
 def test_review_recalculation_endpoint_applies_manual_override():
