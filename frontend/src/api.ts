@@ -1,5 +1,6 @@
 import type {
   ClassifiedTransaction,
+  CreditProfile,
   FundingCapacity,
   ReviewRecalculation,
   StatementAnalysis,
@@ -135,4 +136,32 @@ export async function recalculateReviewedTransactions(input: {
   }
 
   return response.json() as Promise<ReviewRecalculation>;
+}
+
+
+export async function analyzeCreditReport(
+  file: File,
+  options: { enableOcr: boolean },
+): Promise<CreditProfile> {
+  const body = new FormData();
+  body.append("file", file);
+  body.append("enable_ocr", String(options.enableOcr));
+
+  const response = await fetch(
+    `${API_BASE_URL}/v1/documents/credit-report/analyze`,
+    {
+      method: "POST",
+      body,
+    },
+  );
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null);
+    throw new Error(
+      payload?.detail ||
+        `Credit-report analysis failed with HTTP ${response.status}`,
+    );
+  }
+
+  return response.json() as Promise<CreditProfile>;
 }
