@@ -104,11 +104,16 @@ def assess_extraction_quality(
     score = max(0, min(100, score))
     status = "HIGH" if score >= 85 else "MODERATE" if score >= 65 else "LOW"
 
-    if extraction_mode.upper().startswith("OCR") and status == "HIGH":
+    mode_upper = extraction_mode.upper()
+    if (
+        mode_upper.startswith("OCR")
+        or "VISION" in mode_upper
+    ) and status == "HIGH":
         status = "MODERATE"
         warnings.append(
-            "OCR-derived extraction is capped at MODERATE until validated "
-            "against a source-positioned ledger."
+            "OCR/vision-derived extraction is capped at MODERATE until "
+            "validated against native positioned text or a private golden "
+            "statement corpus."
         )
 
     return ExtractionQuality(
