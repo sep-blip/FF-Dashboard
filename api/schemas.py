@@ -144,3 +144,46 @@ class StatementAnalysisResponse(BaseModel):
     skipped_duplicates: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
 
+
+
+class ReviewedTransactionRequest(BaseModel):
+    transaction_id: str
+    date: str
+    amount: float = Field(ge=0)
+    direction: str
+    category: str
+    needs_review: bool
+
+
+class TransactionOverrideRequest(BaseModel):
+    transaction_id: str
+    category: str
+    reason: str = Field(default="Underwriter override", max_length=500)
+
+
+class ReviewRecalculationRequest(BaseModel):
+    transactions: list[ReviewedTransactionRequest]
+    overrides: list[TransactionOverrideRequest] = Field(default_factory=list)
+    coverage_status_by_month: dict[str, str] = Field(default_factory=dict)
+    monthly_debt_service_by_lender: dict[str, float] = Field(default_factory=dict)
+    readiness_checks: dict[str, str] = Field(default_factory=dict)
+
+
+class OverrideAuditResponse(BaseModel):
+    transaction_id: str
+    previous_category: str
+    new_category: str
+    reason: str
+
+
+class ReviewRecalculationResponse(BaseModel):
+    categories_by_transaction: dict[str, str]
+    needs_review_by_transaction: dict[str, bool]
+    monthly_true_revenue: dict[str, float]
+    revenue_baseline: RevenueBaselineResponse
+    debt_ratios: DebtRatioResponse
+    remaining_review_count: int
+    override_audit: list[OverrideAuditResponse]
+    readiness_status: str
+    automated_offer_allowed: bool
+    readiness_checks: dict[str, str]
