@@ -16,6 +16,7 @@ from engine_v2.identifiers import stable_statement_id, stable_transaction_id
 from engine_v2.period import extract_statement_period
 from engine_v2.pdf_integrity import analyze_pdf_integrity
 from engine_v2.pipeline import analyze_statement_files
+from engine_v2.scorecard import ScorecardInputs, calculate_scorecard
 
 
 st.set_page_config(page_title="Forward Funding - Underwriting Tool", layout="wide")
@@ -1555,64 +1556,82 @@ with tab3:
     with h_col2:
         active_default = st.checkbox("Active lender default / collections?")
 
-    score = 0
-    hard_stop_reasons = []
+    scorecard_result = calculate_scorecard(
+        ScorecardInputs(
+            average_monthly_true_revenue=auto_avg_true_rev,
+            revenue_trend_pct=auto_trend_pct,
+            average_deposit_count=int(auto_deposit_count),
+            revenue_volatility_pct=auto_rev_volatility,
+            average_daily_balance=float(avg_daily_balance),
+            mca_position_count=int(auto_mca_positions),
+            mca_burden_pct=auto_mca_burden_pct,
+            borrowing_velocity=borrowing_velocity,
+            returned_ach_or_missed_payments=int(auto_payment_perf),
+            negative_days=int(negative_days),
+            time_in_business_months=int(time_in_biz),
+            industry_score=int(industry_score),
+            seasonality_score=int(seasonality_score),
+            credit_score=int(credit_score),
+            public_records=public_records,
+            bank_verification=bank_verification,
+            revenue_concentration_pct=auto_concentration_pct,
+            suspected_fraud=fraud_suspected,
+            severe_wash_transactions=wash_flag,
+            active_lender_default=active_default,
+        )
+    )
 
-    if fraud_suspected: hard_stop_reasons.append("Suspected altered statements / fraud")
-    if active_default: hard_stop_reasons.append("Active lender default or collections")
-    if wash_flag: hard_stop_reasons.append("Evidence of structural wash transactions to cover debt")
-    if auto_avg_true_rev < 10000: hard_stop_reasons.append("Avg True Revenue is under $10,000 policy minimum")
-
-    if hard_stop_reasons:
-        st.error(f"🚨 **POLICY HARD STOP / AUTO DECLINE**: {', '.join(hard_stop_reasons)}")
+    if scorecard_result.hard_stop:
+        st.error(
+            "🚨 **POLICY HARD STOP / AUTO DECLINE**: "
+            + ", ".join(scorecard_result.hard_stop_reasons)
+        )
     else:
-        pts_rev = 6 if auto_avg_true_rev >= 150000 else 5 if auto_avg_true_rev >= 75000 else 4 if auto_avg_true_rev >= 40000 else 3 if auto_avg_true_rev >= 20000 else 2 if auto_avg_true_rev >= 10000 else 0
-        pts_trend = 6 if auto_trend_pct > 15 else 5 if auto_trend_pct >= 5 else 4 if auto_trend_pct >= -5 else 2 if auto_trend_pct >= -10 else 1 if auto_trend_pct >= -20 else 0
-        pts_count = 5 if auto_deposit_count >= 40 else 4 if auto_deposit_count >= 20 else 3 if auto_deposit_count >= 10 else 2 if auto_deposit_count >= 5 else 0
-        pts_vol = 5 if auto_rev_volatility <= 10 else 4 if auto_rev_volatility <= 20 else 3 if auto_rev_volatility <= 30 else 2 if auto_rev_volatility <= 40 else 1 if auto_rev_volatility <= 50 else 0
-
-        # These four cash-flow components were previously calculated but never
-        # added to the score, materially understating otherwise strong deals.
-        score += pts_rev + pts_trend + pts_count + pts_vol
-
-        adb_pct = (avg_daily_balance / auto_avg_true_rev * 100) if auto_avg_true_rev > 0 else 0
-        score += 5 if adb_pct >= 10 else 4 if adb_pct >= 7 else 3 if adb_pct >= 4 else 2 if adb_pct >= 2 else 1 if adb_pct >= 1 else 0
-
-        score += 6 if auto_mca_positions == 0 else 5 if auto_mca_positions == 1 else 3 if auto_mca_positions == 2 else 1 if auto_mca_positions == 3 else 0
-        score += 10 if auto_mca_burden_pct <= 8 else 8 if auto_mca_burden_pct <= 12 else 6 if auto_mca_burden_pct <= 16 else 4 if auto_mca_burden_pct <= 20 else 2 if auto_mca_burden_pct <= 25 else 0
-
-        score += 5 if borrowing_velocity == "0 in 90 Days" else 3 if borrowing_velocity == "1 in 90 Days" else 1
-        score += 4 if auto_payment_perf == 0 else 3 if auto_payment_perf == 1 else 2 if auto_payment_perf == 2 else 1 if auto_payment_perf <= 4 else 0
-        score += 6 if negative_days == 0 else 5 if negative_days <= 3 else 3 if negative_days <= 6 else 2 if negative_days <= 10 else 1 if negative_days <= 15 else 0
-
-        score += 6 if time_in_biz >= 84 else 5 if time_in_biz >= 48 else 4 if time_in_biz >= 24 else 3 if time_in_biz >= 12 else 1 if time_in_biz >= 6 else 0
-        score += industry_score
-        score += seasonality_score
-
-        score += 6 if credit_score >= 750 else 5 if credit_score >= 700 else 4 if credit_score >= 650 else 3 if credit_score >= 600 else 2 if credit_score >= 550 else 1 if credit_score >= 500 else 0
-        score += 4 if public_records == "Clean" else 3 if public_records == "Minor" else 1 if public_records == "Moderate" else 0
-        score += 3 if bank_verification == "Bank Connect" else 2 if bank_verification == "Original PDF" else 1 if bank_verification == "Minor inconsistency" else 0
-        score += 2 if auto_concentration_pct <= 20 else 1 if auto_concentration_pct <= 35 else 0
-
-        if score >= 90: grade, risk, advance, max_burden = "A+", "Prime MCA", 1.00, 0.18
-        elif score >= 82: grade, risk, advance, max_burden = "A", "Strong", 0.85, 0.17
-        elif score >= 74: grade, risk, advance, max_burden = "B", "Acceptable", 0.70, 0.15
-        elif score >= 66: grade, risk, advance, max_burden = "C", "Elevated", 0.55, 0.13
-        elif score >= 58: grade, risk, advance, max_burden = "D", "High", 0.35, 0.10
-        else: grade, risk, advance, max_burden = "E", "High / Unacceptable", 0.00, 0.00
+        score = scorecard_result.score
+        grade = scorecard_result.grade
+        risk = scorecard_result.risk_tier
+        advance = scorecard_result.revenue_advance_multiple
+        max_burden = scorecard_result.max_total_debt_burden_pct / 100.0
 
         max_advance_dollars = auto_avg_true_rev * advance
-        remaining_monthly_capacity = max(0.0, (auto_avg_true_rev * max_burden) - (auto_avg_true_rev * (auto_mca_burden_pct / 100)))
+        remaining_monthly_capacity = max(
+            0.0,
+            (auto_avg_true_rev * max_burden)
+            - (auto_avg_true_rev * (auto_mca_burden_pct / 100)),
+        )
         affordable_daily_payment = remaining_monthly_capacity / 21
 
         st.markdown("### 🏆 Underwriting Score & Offer Structuring")
         r1, r2, r3, r4 = st.columns(4)
-        r1.metric("Overall Score", f"{score} / 100")
+        r1.metric(
+            "Overall Score",
+            f"{score} / {scorecard_result.max_score}"
+        )
         r2.metric("Score Grade", grade)
         r3.metric("Risk Tier", risk)
         r4.metric("Suggested Max Advance %", f"{advance * 100:.0f}%")
 
         s1, s2, s3 = st.columns(3)
         s1.metric("Suggested Max Advance ($)", f"${max_advance_dollars:,.2f}")
-        s2.metric("Remaining Monthly Debt Capacity ($)", f"${remaining_monthly_capacity:,.2f}")
-        s3.metric("Affordable Daily Payment (21 days)", f"${affordable_daily_payment:,.2f}")
+        s2.metric(
+            "Remaining Monthly Debt Capacity ($)",
+            f"${remaining_monthly_capacity:,.2f}",
+        )
+        s3.metric(
+            "Affordable Daily Payment (21 days)",
+            f"${affordable_daily_payment:,.2f}",
+        )
+
+        with st.expander("Scorecard breakdown"):
+            breakdown_df = pd.DataFrame(
+                [
+                    {"Component": key.replace("_", " ").title(), "Points": value}
+                    for key, value in scorecard_result.breakdown.items()
+                ]
+            )
+            st.dataframe(breakdown_df, hide_index=True, width="stretch")
+            st.caption(
+                f"Policy version: {scorecard_result.policy_version}. "
+                f"Current configured maximum score: "
+                f"{scorecard_result.max_score}."
+            )
