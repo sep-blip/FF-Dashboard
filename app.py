@@ -30,6 +30,7 @@ except (FileNotFoundError, KeyError):
 
 client = OpenAI(api_key=api_key) if api_key else None
 CLASSIFIER_MODEL = "gpt-5.6-terra"
+VISION_MODEL = "gpt-5.6-terra"
 CREDIT_MODEL = "gpt-5.6-sol"
 
 # INDUSTRY SCORING DICTIONARY 
@@ -287,6 +288,8 @@ if 'full_ledger' not in st.session_state:
     st.session_state.full_ledger = None
 if 'revenue_baseline' not in st.session_state:
     st.session_state.revenue_baseline = None
+if 'decision_readiness' not in st.session_state:
+    st.session_state.decision_readiness = None
 
 
 # ==============================================================================
@@ -624,6 +627,25 @@ with tab1:
             accept_multiple_files=False
         )
 
+    opt_col1, opt_col2 = st.columns(2)
+    with opt_col1:
+        enable_ocr_option = st.checkbox(
+            "Enable OCR text fallback",
+            value=False,
+            help="Uses bilingual English/French OCR when native PDF text is unavailable."
+        )
+    with opt_col2:
+        enable_vision_option = st.checkbox(
+            "Enable vision fallback for unreadable pages",
+            value=bool(client),
+            disabled=not bool(client),
+            help=(
+                "Uses the vision model only for pages that cannot be reliably "
+                "read by native positioned extraction. Vision-derived rows "
+                "still require reconciliation/review."
+            ),
+        )
+
     if credit_file and client:
         if st.button("🔍 Extract Credit", type="secondary"):
             with st.spinner("Extracting Credit..."):
@@ -680,8 +702,11 @@ with tab1:
         pipeline_result = analyze_statement_files(
             files=upload_payload,
             ai_client=client,
+            vision_client=client,
             classifier_model=CLASSIFIER_MODEL,
-            enable_ocr=False,
+            enable_ocr=enable_ocr_option,
+            enable_vision_fallback=enable_vision_option,
+            vision_model=VISION_MODEL,
         )
 
         coverage_records = []
@@ -740,6 +765,19 @@ with tab1:
             integrity_records.append({
                 "source_file": statement.source_file,
                 "statement_id": statement.statement_id,
+                "bank": statement.bank_name or statement.bank_id,
+                "extraction_quality": (
+                    statement.extraction_quality.status
+                    if statement.extraction_quality else "UNKNOWN"
+                ),
+                "extraction_quality_score": (
+                    statement.extraction_quality.score
+                    if statement.extraction_quality else None
+                ),
+                "extraction_mode": (
+                    statement.extraction_quality.extraction_mode
+                    if statement.extraction_quality else None
+                ),
                 "score": (
                     effective_integrity.score
                     if effective_integrity else None
@@ -785,6 +823,22 @@ with tab1:
         st.session_state.expected_credits = expected_credits
         st.session_state.statement_coverage = coverage_records
         st.session_state.pdf_integrity_reports = integrity_records
+        st.session_state.decision_readiness = (
+            {
+                "status": pipeline_result.decision_readiness.status.value,
+                "automated_offer_allowed": (
+                    pipeline_result.decision_readiness.automated_offer_allowed
+                ),
+                "blocking_reasons": list(
+                    pipeline_result.decision_readiness.blocking_reasons
+                ),
+                "review_reasons": list(
+                    pipeline_result.decision_readiness.review_reasons
+                ),
+                "checks": pipeline_result.decision_readiness.checks,
+            }
+            if pipeline_result.decision_readiness else None
+        )
         st.session_state.revenue_baseline = (
             {
                 "average_monthly_true_revenue": (
