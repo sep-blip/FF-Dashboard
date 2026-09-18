@@ -222,10 +222,20 @@ def _run_statement_analysis(
     enable_vision_fallback: bool,
     use_ai_classifier: bool,
 ) -> UnderwritingPipelineResult:
-    client = _optional_openai_client() if use_ai_classifier else None
+    classifier_client = (
+        _optional_openai_client()
+        if use_ai_classifier
+        else None
+    )
+    vision_client = (
+        _optional_openai_client()
+        if enable_vision_fallback
+        else None
+    )
     return analyze_statement_files(
         files=payloads,
-        ai_client=client,
+        ai_client=classifier_client,
+        vision_client=vision_client,
         classifier_model=os.getenv(
             "TRANSACTION_CLASSIFIER_MODEL",
             "gpt-5.6-terra",
