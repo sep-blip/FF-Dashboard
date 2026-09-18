@@ -1,6 +1,10 @@
 import { useMemo, useState } from "react";
-import { analyzeStatements } from "./api";
-import type { ClassifiedTransaction, StatementAnalysis } from "./types";
+import { analyzeStatements, calculateFundingCapacity } from "./api";
+import type {
+  ClassifiedTransaction,
+  FundingCapacity,
+  StatementAnalysis,
+} from "./types";
 
 const money = new Intl.NumberFormat("en-CA", {
   style: "currency",
@@ -78,6 +82,13 @@ export default function App() {
   const [analysis, setAnalysis] = useState<StatementAnalysis | null>(null);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [fundingError, setFundingError] = useState<string | null>(null);
+  const [fundingResult, setFundingResult] = useState<FundingCapacity | null>(null);
+  const [revenueMultiple, setRevenueMultiple] = useState(0.7);
+  const [maxDebtBurdenPct, setMaxDebtBurdenPct] = useState(15);
+  const [factorRate, setFactorRate] = useState(1.3);
+  const [termBusinessDays, setTermBusinessDays] = useState(126);
+  const [absoluteCap, setAbsoluteCap] = useState("");
 
   const reviewCount = useMemo(
     () =>
@@ -108,6 +119,8 @@ export default function App() {
     if (!files.length) return;
     setWorking(true);
     setError(null);
+    setFundingResult(null);
+    setFundingError(null);
     try {
       setAnalysis(
         await analyzeStatements(files, {
@@ -120,6 +133,35 @@ export default function App() {
       setError(err instanceof Error ? err.message : "Analysis failed.");
     } finally {
       setWorking(false);
+    }
+  }
+
+  async function runFundingScenario() {
+    if (!analysis?.revenue_baseline) return;
+    setFundingError(null);
+    try {
+      const cap = absoluteCap.trim()
+        ? Number(absoluteCap)
+        : null;
+      setFundingResult(
+        await calculateFundingCapacity({
+          averageMonthlyTrueRevenue:
+            analysis.revenue_baseline.average_monthly_true_revenue,
+          existingMonthlyDebtService:
+            analysis.debt_ratios?.total_monthly_debt_service || 0,
+          revenueMultiple,
+          maxTotalDebtBurdenPct: maxDebtBurdenPct,
+          factorRate,
+          termBusinessDays,
+          absoluteMaxAdvance: cap,
+        }),
+      );
+    } catch (err) {
+      setFundingError(
+        err instanceof Error
+          ? err.message
+          : "Funding-capacity calculation failed.",
+      );
     }
   }
 
@@ -290,6 +332,155 @@ export default function App() {
               <strong>{reviewCount}</strong>
               <small>Fail-closed classification</small>
             </article>
+          </section>
+
+          <section className="panel">
+            <div className="section-heading-row">
+              <div>
+                <h2>Funding capacity scenario</h2>
+                <p className="subtle">
+                  Deterministic scenario math. A result is not a final offer
+                  unless the document controls are cleared.
+                </p>
+              </div>
+              <StatusPill
+                value={
+                  analysis.decision_readiness?.automated_offer_allowed
+                    ? "READY"
+                    : "SCENARIO ONLY"
+                }
+              />
+            </div>
+
+            <div className="policy-grid">
+              <label>
+                Revenue multiple
+                <input
+                  type="number"
+                  min="0"
+                  step="0.05"
+                  value={revenueMultiple}
+                  onChange={(event) =>
+                    setRevenueMultiple(Number(event.target.value))
+                  }
+                />
+              </label>
+              <label>
+                Max total debt burden %
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.5"
+                  value={maxDebtBurdenPct}
+                  onChange={(event) =>
+                    setMaxDebtBurdenPct(Number(event.target.value))
+                  }
+                />
+              </label>
+              <label>
+                Factor rate
+                <input
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  value={factorRate}
+                  onChange={(event) =>
+                    setFactorRate(Number(event.target.value))
+                  }
+                />
+              </label>
+              <label>
+                Term business days
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={termBusinessDays}
+                  onChange={(event) =>
+                    setTermBusinessDays(Number(event.target.value))
+                  }
+                />
+              </label>
+              <label>
+                Absolute cap (optional)
+                <input
+                  type="number"
+                  min="0"
+                  step="1000"
+                  placeholder="No cap"
+                  value={absoluteCap}
+                  onChange={(event) => setAbsoluteCap(event.target.value)}
+                />
+              </label>
+            </div>
+
+            <div className="scenario-inputs">
+              <span>
+                Revenue baseline:{" "}
+                <strong>
+                  {money.format(
+                    analysis.revenue_baseline
+                      ?.average_monthly_true_revenue || 0,
+                  )}
+                </strong>
+              </span>
+              <span>
+                Existing monthly debt:{" "}
+                <strong>
+                  {money.format(
+                    analysis.debt_ratios
+                      ?.total_monthly_debt_service || 0,
+                  )}
+                </strong>
+              </span>
+              <button onClick={runFundingScenario}>
+                Calculate scenario
+              </button>
+            </div>
+
+            {fundingError && (
+              <div className="alert risk-alert">{fundingError}</div>
+            )}
+
+            {fundingResult && (
+              <div className="kpis scenario-results">
+                <article className="kpi">
+                  <span>Recommended advance</span>
+                  <strong>
+                    {money.format(fundingResult.recommended_advance)}
+                  </strong>
+                  <small>
+                    Lowest applicable deterministic ceiling
+                  </small>
+                </article>
+                <article className="kpi">
+                  <span>Affordable daily payment</span>
+                  <strong>
+                    {money.format(fundingResult.affordable_daily_payment)}
+                  </strong>
+                  <small>{fundingResult.term_business_days} business days</small>
+                </article>
+                <article className="kpi">
+                  <span>Projected monthly payment</span>
+                  <strong>
+                    {money.format(
+                      fundingResult.projected_new_monthly_payment,
+                    )}
+                  </strong>
+                  <small>New position only</small>
+                </article>
+                <article className="kpi">
+                  <span>Projected total debt ratio</span>
+                  <strong>
+                    {fundingResult.projected_total_debt_ratio_pct.toFixed(1)}%
+                  </strong>
+                  <small>
+                    Limit {maxDebtBurdenPct.toFixed(1)}%
+                  </small>
+                </article>
+              </div>
+            )}
           </section>
 
           <section className="panel">
