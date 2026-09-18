@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import hashlib
 import os
 from dataclasses import asdict
 
-from fastapi import FastAPI, File, Form, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAI
 
+from engine_v2.credit_extraction import extract_credit_profile
 from engine_v2.funding import FundingPolicy, calculate_funding_capacity
 from engine_v2.metrics import select_revenue_baseline
 from engine_v2.pipeline import UnderwritingPipelineResult, analyze_statement_files
@@ -15,10 +17,12 @@ from engine_v2.review import (
     TransactionOverride,
     recalculate_after_review,
 )
+from engine_v2.statement_parser import extract_text_with_fallbacks
 
 from .schemas import (
     AuditManifestResponse,
     ClassifiedTransactionResponse,
+    CreditProfileResponse,
     DebtRatioResponse,
     DecisionReadinessResponse,
     FundingCapacityRequest,
@@ -376,7 +380,6 @@ def recalculate_reviewed_transactions(
             readiness_checks=payload.readiness_checks,
         )
     except ValueError as exc:
-        from fastapi import HTTPException
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return ReviewRecalculationResponse(
@@ -419,4 +422,78 @@ def recalculate_reviewed_transactions(
         readiness_status=result.readiness_status,
         automated_offer_allowed=result.automated_offer_allowed,
         readiness_checks=result.readiness_checks,
+    )
+
+
+@app.post(
+    "/v1/documents/credit-report/analyze",
+    response_model=CreditProfileResponse,
+)
+async def analyze_credit_report(
+    file: UploadFile = File(...),
+    enable_ocr: bool = Form(True),
+) -> CreditProfileResponse:
+    client = _optional_openai_client()
+    if client is None:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "OPENAI_API_KEY is required for structured credit-report "
+                "extraction."
+            ),
+        )
+
+    payload = await file.read()
+    text, diagnostics = extract_text_with_fallbacks(
+        payload,
+        enable_ocr=enable_ocr,
+    )
+    if not text:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "No readable text could be extracted from the credit report."
+            ),
+        )
+
+    try:
+        profile = extract_credit_profile(
+            client=client,
+            credit_text=text,
+            model=os.getenv(
+                "CREDIT_REPORT_MODEL",
+                "gpt-5.6-sol",
+            ),
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Credit-report extraction failed: {exc}",
+        ) from exc
+
+    warnings = list(profile.warnings)
+    warnings.extend(
+        diagnostic
+        for diagnostic in diagnostics
+        if "failed" in diagnostic.lower()
+        or "fallback" in diagnostic.lower()
+    )
+
+    return CreditProfileResponse(
+        source_file=file.filename or "credit-report.pdf",
+        sha256=hashlib.sha256(payload).hexdigest(),
+        owner_name=profile.owner_name,
+        fico_score=profile.fico_score,
+        total_high_credit=profile.total_high_credit,
+        revolving_credit_utilization_pct=(
+            profile.revolving_credit_utilization_pct
+        ),
+        active_collections_count=profile.active_collections_count,
+        total_collections_amount=profile.total_collections_amount,
+        bankruptcies_found=profile.bankruptcies_found,
+        number_of_mortgages=profile.number_of_mortgages,
+        mortgage_ltv_details=profile.mortgage_ltv_details,
+        evidence=profile.evidence,
+        warnings=warnings,
+        model_name=profile.model_name,
     )
