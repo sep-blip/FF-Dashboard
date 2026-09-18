@@ -187,3 +187,20 @@ class ReviewRecalculationResponse(BaseModel):
     readiness_status: str
     automated_offer_allowed: bool
     readiness_checks: dict[str, str]
+
+
+class CreditProfileResponse(BaseModel):
+    source_file: str
+    sha256: str
+    owner_name: str | None = None
+    fico_score: int | None = None
+    total_high_credit: float | None = None
+    revolving_credit_utilization_pct: float | None = None
+    active_collections_count: int | None = None
+    total_collections_amount: float | None = None
+    bankruptcies_found: bool | None = None
+    number_of_mortgages: int | None = None
+    mortgage_ltv_details: str | None = None
+    evidence: dict[str, str] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+    model_name: str | None = None
