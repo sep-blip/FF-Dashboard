@@ -960,6 +960,320 @@ export default function App() {
           <section className="panel">
             <div className="section-heading-row">
               <div>
+                <h2>Risk scorecard</h2>
+                <p className="subtle">
+                  Automated cash-flow features are combined with bureau and
+                  underwriter inputs. The scorecard is deterministic and
+                  versioned.
+                </p>
+              </div>
+              {scorecardResult && (
+                <StatusPill
+                  value={
+                    scorecardResult.hard_stop
+                      ? "HARD STOP"
+                      : scorecardResult.grade
+                  }
+                />
+              )}
+            </div>
+
+            {effectiveFeatures ? (
+              <>
+                <div className="kpis scorecard-feature-kpis">
+                  <article className="kpi">
+                    <span>Revenue trend</span>
+                    <strong>
+                      {effectiveFeatures.revenue_trend_pct.toFixed(1)}%
+                    </strong>
+                    <small>Selected underwriting months</small>
+                  </article>
+                  <article className="kpi">
+                    <span>Revenue volatility</span>
+                    <strong>
+                      {effectiveFeatures.revenue_volatility_pct.toFixed(1)}%
+                    </strong>
+                    <small>Coefficient of variation</small>
+                  </article>
+                  <article className="kpi">
+                    <span>MCA burden</span>
+                    <strong>
+                      {effectiveFeatures.mca_burden_pct.toFixed(1)}%
+                    </strong>
+                    <small>
+                      {effectiveFeatures.mca_position_count} position(s)
+                    </small>
+                  </article>
+                  <article className="kpi">
+                    <span>Revenue concentration</span>
+                    <strong>
+                      {effectiveFeatures.revenue_concentration_pct.toFixed(1)}%
+                    </strong>
+                    <small>Largest identified payer share</small>
+                  </article>
+                </div>
+
+                <div className="scorecard-grid">
+                  <label>
+                    Average daily balance
+                    <input
+                      type="number"
+                      min="0"
+                      step="100"
+                      value={averageDailyBalance}
+                      onChange={(event) =>
+                        setAverageDailyBalance(Number(event.target.value))
+                      }
+                    />
+                  </label>
+                  <label>
+                    Negative days
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={negativeDays}
+                      onChange={(event) =>
+                        setNegativeDays(Number(event.target.value))
+                      }
+                    />
+                  </label>
+                  <label>
+                    Time in business (months)
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={timeInBusinessMonths}
+                      onChange={(event) =>
+                        setTimeInBusinessMonths(
+                          Number(event.target.value),
+                        )
+                      }
+                    />
+                  </label>
+                  <label>
+                    Industry points (0-8)
+                    <input
+                      type="number"
+                      min="0"
+                      max="8"
+                      step="1"
+                      value={industryScore}
+                      onChange={(event) =>
+                        setIndustryScore(Number(event.target.value))
+                      }
+                    />
+                  </label>
+                  <label>
+                    Seasonality points (0-6)
+                    <input
+                      type="number"
+                      min="0"
+                      max="6"
+                      step="1"
+                      value={seasonalityScore}
+                      onChange={(event) =>
+                        setSeasonalityScore(Number(event.target.value))
+                      }
+                    />
+                  </label>
+                  <label>
+                    Credit score
+                    <input
+                      type="number"
+                      min="300"
+                      max="900"
+                      step="1"
+                      value={creditScoreInput}
+                      onChange={(event) =>
+                        setCreditScoreInput(Number(event.target.value))
+                      }
+                    />
+                  </label>
+                  <label>
+                    Borrowing velocity
+                    <select
+                      value={borrowingVelocity}
+                      onChange={(event) =>
+                        setBorrowingVelocity(event.target.value)
+                      }
+                    >
+                      <option>0 in 90 Days</option>
+                      <option>1 in 90 Days</option>
+                      <option>2+ in 90 Days</option>
+                    </select>
+                  </label>
+                  <label>
+                    Public records
+                    <select
+                      value={publicRecords}
+                      onChange={(event) =>
+                        setPublicRecords(event.target.value)
+                      }
+                    >
+                      <option>Clean</option>
+                      <option>Minor</option>
+                      <option>Moderate</option>
+                      <option>Severe</option>
+                    </select>
+                  </label>
+                  <label>
+                    Bank verification
+                    <select
+                      value={bankVerification}
+                      onChange={(event) =>
+                        setBankVerification(event.target.value)
+                      }
+                    >
+                      <option>Bank Connect</option>
+                      <option>Original PDF</option>
+                      <option>Minor inconsistency</option>
+                      <option>Unverified</option>
+                    </select>
+                  </label>
+                </div>
+
+                <div className="flag-grid">
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={suspectedFraud}
+                      onChange={(event) =>
+                        setSuspectedFraud(event.target.checked)
+                      }
+                    />
+                    Suspected altered statements / fraud
+                  </label>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={severeWash}
+                      onChange={(event) =>
+                        setSevereWash(event.target.checked)
+                      }
+                    />
+                    Severe wash transactions
+                  </label>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={activeLenderDefault}
+                      onChange={(event) =>
+                        setActiveLenderDefault(event.target.checked)
+                      }
+                    />
+                    Active lender default / collections
+                  </label>
+                </div>
+
+                <div className="scenario-inputs">
+                  <span>
+                    Returned ACH / missed payments:{" "}
+                    <strong>
+                      {effectiveFeatures.returned_payment_count}
+                    </strong>
+                  </span>
+                  <span>
+                    Avg. deposit count:{" "}
+                    <strong>
+                      {effectiveFeatures.average_deposit_count}
+                    </strong>
+                  </span>
+                  <button
+                    disabled={scorecardWorking}
+                    onClick={runScorecard}
+                  >
+                    {scorecardWorking
+                      ? "Scoring…"
+                      : "Calculate scorecard"}
+                  </button>
+                </div>
+
+                {scorecardError && (
+                  <div className="alert risk-alert">
+                    {scorecardError}
+                  </div>
+                )}
+
+                {scorecardResult?.hard_stop && (
+                  <div className="alert risk-alert">
+                    Hard stop:{" "}
+                    {scorecardResult.hard_stop_reasons.join("; ")}
+                  </div>
+                )}
+
+                {scorecardResult && !scorecardResult.hard_stop && (
+                  <>
+                    <div className="kpis scorecard-results">
+                      <article className="kpi">
+                        <span>Score</span>
+                        <strong>
+                          {scorecardResult.score} /{" "}
+                          {scorecardResult.max_score}
+                        </strong>
+                        <small>
+                          {scorecardResult.policy_version}
+                        </small>
+                      </article>
+                      <article className="kpi">
+                        <span>Grade</span>
+                        <strong>{scorecardResult.grade}</strong>
+                        <small>{scorecardResult.risk_tier}</small>
+                      </article>
+                      <article className="kpi">
+                        <span>Revenue advance multiple</span>
+                        <strong>
+                          {(
+                            scorecardResult.revenue_advance_multiple *
+                            100
+                          ).toFixed(0)}
+                          %
+                        </strong>
+                        <small>
+                          Applied to funding scenario
+                        </small>
+                      </article>
+                      <article className="kpi">
+                        <span>Max total debt burden</span>
+                        <strong>
+                          {scorecardResult.max_total_debt_burden_pct.toFixed(
+                            1,
+                          )}
+                          %
+                        </strong>
+                        <small>
+                          Applied to funding scenario
+                        </small>
+                      </article>
+                    </div>
+
+                    <details className="score-breakdown">
+                      <summary>Score breakdown</summary>
+                      <div className="audit-grid">
+                        {Object.entries(
+                          scorecardResult.breakdown,
+                        ).map(([component, points]) => (
+                          <span key={component}>
+                            {component.replaceAll("_", " ")}
+                            <strong>{points} pts</strong>
+                          </span>
+                        ))}
+                      </div>
+                    </details>
+                  </>
+                )}
+              </>
+            ) : (
+              <p className="subtle">
+                Process bank statements before calculating the scorecard.
+              </p>
+            )}
+          </section>
+
+          <section className="panel">
+            <div className="section-heading-row">
+              <div>
                 <h2>Funding capacity scenario</h2>
                 <p className="subtle">
                   Deterministic scenario math. A scenario is not a final offer
