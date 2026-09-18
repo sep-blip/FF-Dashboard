@@ -105,6 +105,22 @@ class DebtRatioResponse(BaseModel):
     individual_ratios_pct: dict[str, float]
 
 
+class UnderwritingFeaturesResponse(BaseModel):
+    gross_deposits: float
+    average_monthly_true_revenue: float
+    revenue_trend_pct: float
+    revenue_volatility_pct: float
+    average_deposit_count: int
+    revenue_concentration_pct: float
+    median_deposit: float
+    largest_deposit: float
+    returned_payment_count: int
+    mca_position_count: int
+    monthly_mca_debt_service: float
+    mca_burden_pct: float
+    revenue_coverage_ratio: float
+
+
 class DecisionReadinessResponse(BaseModel):
     status: str
     automated_offer_allowed: bool
@@ -139,6 +155,7 @@ class StatementAnalysisResponse(BaseModel):
     monthly_true_revenue: dict[str, float]
     revenue_baseline: RevenueBaselineResponse | None = None
     debt_ratios: DebtRatioResponse | None = None
+    features: UnderwritingFeaturesResponse | None = None
     decision_readiness: DecisionReadinessResponse | None = None
     audit_manifest: AuditManifestResponse | None = None
     skipped_duplicates: list[str] = Field(default_factory=list)
