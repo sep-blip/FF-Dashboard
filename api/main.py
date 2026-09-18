@@ -404,6 +404,9 @@ def recalculate_reviewed_transactions(
                 payload.monthly_debt_service_by_lender
             ),
             readiness_checks=payload.readiness_checks,
+            average_daily_balance=payload.average_daily_balance,
+            negative_days=payload.negative_days,
+            balance_observed_days=payload.balance_observed_days,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
