@@ -70,6 +70,36 @@ export type DecisionReadiness = {
   checks: Record<string, string>;
 };
 
+export type AuditManifest = {
+  run_id: string;
+  generated_at: string;
+  engine_version: string;
+  classifier_model: string;
+  vision_model: string;
+  enable_ocr: boolean;
+  enable_vision_fallback: boolean;
+  source_documents: Array<{
+    source_file: string;
+    sha256: string;
+    statement_id: string;
+    bank_id: string | null;
+    page_count: number;
+  }>;
+};
+
+export type FundingCapacity = {
+  max_by_revenue: number;
+  max_by_debt_capacity: number;
+  policy_cap: number | null;
+  recommended_advance: number;
+  remaining_monthly_debt_capacity: number;
+  affordable_daily_payment: number;
+  projected_new_monthly_payment: number;
+  projected_total_debt_ratio_pct: number;
+  factor_rate: number;
+  term_business_days: number;
+};
+
 export type StatementAnalysis = {
   statements: StatementSummary[];
   transactions: ClassifiedTransaction[];
@@ -78,6 +108,7 @@ export type StatementAnalysis = {
   revenue_baseline: RevenueBaseline | null;
   debt_ratios: DebtRatios | null;
   decision_readiness: DecisionReadiness | null;
+  audit_manifest: AuditManifest | null;
   skipped_duplicates: string[];
   warnings: string[];
 };
