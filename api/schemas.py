@@ -105,6 +105,14 @@ class DebtRatioResponse(BaseModel):
     individual_ratios_pct: dict[str, float]
 
 
+class DecisionReadinessResponse(BaseModel):
+    status: str
+    automated_offer_allowed: bool
+    blocking_reasons: list[str] = Field(default_factory=list)
+    review_reasons: list[str] = Field(default_factory=list)
+    checks: dict[str, str] = Field(default_factory=dict)
+
+
 class StatementAnalysisResponse(BaseModel):
     statements: list[StatementSummaryResponse]
     transactions: list[ClassifiedTransactionResponse]
@@ -112,6 +120,7 @@ class StatementAnalysisResponse(BaseModel):
     monthly_true_revenue: dict[str, float]
     revenue_baseline: RevenueBaselineResponse | None = None
     debt_ratios: DebtRatioResponse | None = None
+    decision_readiness: DecisionReadinessResponse | None = None
     skipped_duplicates: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
 
