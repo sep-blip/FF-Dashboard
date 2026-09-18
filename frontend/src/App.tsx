@@ -340,13 +340,19 @@ export default function App() {
     setFundingError(null);
 
     try {
-      setAnalysis(
-        await analyzeStatements(files, {
-          enableOcr,
-          enableVisionFallback: enableVision,
-          useAiClassifier: useAi,
-        }),
-      );
+      const result = await analyzeStatements(files, {
+        enableOcr,
+        enableVisionFallback: enableVision,
+        useAiClassifier: useAi,
+      });
+      setAnalysis(result);
+
+      if (result.features) {
+        setAverageDailyBalance(
+          result.features.average_daily_balance,
+        );
+        setNegativeDays(result.features.negative_days);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Analysis failed.");
     } finally {
