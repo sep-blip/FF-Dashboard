@@ -17,6 +17,7 @@ from engine_v2.review import (
     TransactionOverride,
     recalculate_after_review,
 )
+from engine_v2.scorecard import ScorecardInputs, calculate_scorecard
 from engine_v2.statement_parser import extract_text_with_fallbacks
 
 from .schemas import (
@@ -34,6 +35,8 @@ from .schemas import (
     ReviewRecalculationRequest,
     ReviewRecalculationResponse,
     OverrideAuditResponse,
+    ScorecardRequest,
+    ScorecardResponse,
     SourceDocumentAuditResponse,
     StatementAnalysisResponse,
     StatementSummaryResponse,
@@ -504,4 +507,30 @@ async def analyze_credit_report(
         evidence=profile.evidence,
         warnings=warnings,
         model_name=profile.model_name,
+    )
+
+
+@app.post(
+    "/v1/underwriting/scorecard",
+    response_model=ScorecardResponse,
+)
+def underwriting_scorecard(
+    payload: ScorecardRequest,
+) -> ScorecardResponse:
+    result = calculate_scorecard(
+        ScorecardInputs(**payload.model_dump())
+    )
+    return ScorecardResponse(
+        policy_version=result.policy_version,
+        score=result.score,
+        max_score=result.max_score,
+        grade=result.grade,
+        risk_tier=result.risk_tier,
+        revenue_advance_multiple=result.revenue_advance_multiple,
+        max_total_debt_burden_pct=(
+            result.max_total_debt_burden_pct
+        ),
+        hard_stop=result.hard_stop,
+        hard_stop_reasons=list(result.hard_stop_reasons),
+        breakdown=result.breakdown,
     )
