@@ -219,6 +219,7 @@ def _run_statement_analysis(
     payloads: list[tuple[str, bytes]],
     *,
     enable_ocr: bool,
+    enable_vision_fallback: bool,
     use_ai_classifier: bool,
 ) -> UnderwritingPipelineResult:
     client = _optional_openai_client() if use_ai_classifier else None
@@ -230,6 +231,11 @@ def _run_statement_analysis(
             "gpt-5.6-terra",
         ),
         enable_ocr=enable_ocr,
+        enable_vision_fallback=enable_vision_fallback,
+        vision_model=os.getenv(
+            "VISION_LEDGER_MODEL",
+            "gpt-5.6-terra",
+        ),
     )
 
 
@@ -277,12 +283,14 @@ def funding_capacity(payload: FundingCapacityRequest) -> FundingCapacityResponse
 async def analyze_bank_statements(
     files: list[UploadFile] = File(...),
     enable_ocr: bool = Form(False),
+    enable_vision_fallback: bool = Form(True),
     use_ai_classifier: bool = Form(True),
 ) -> StatementAnalysisResponse:
     payloads = await _read_uploads(files)
     result = _run_statement_analysis(
         payloads,
         enable_ocr=enable_ocr,
+        enable_vision_fallback=enable_vision_fallback,
         use_ai_classifier=use_ai_classifier,
     )
     return _analysis_response(result)
