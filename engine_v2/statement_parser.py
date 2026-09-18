@@ -357,10 +357,97 @@ def _positioned_words(page, page_no: int, diagnostics: list[str]) -> list[dict]:
             use_text_flow=False,
         )
         if not words:
-            diagnostics.append(f"Page {page_no}: no positioned words extracted.")
+            diagnostics.append(f"Page {page_no}: no native positioned words extracted.")
         return words or []
     except Exception as exc:
         diagnostics.append(f"Page {page_no}: positioned extraction failed: {exc}")
+        return []
+
+
+def _ocr_positioned_words(
+    pdf_bytes: bytes,
+    *,
+    page_no: int,
+    diagnostics: list[str],
+    scale: float = 2.0,
+) -> list[dict]:
+    """Recover positioned words from a scanned page using Tesseract boxes.
+
+    Coordinates are normalized back to approximate PDF points so the existing
+    spatial parser can reuse its header/column calibration logic.
+    """
+    try:
+        import fitz
+        import pytesseract
+        from PIL import Image
+        from pytesseract import Output
+
+        pdf = fitz.open(stream=pdf_bytes, filetype="pdf")
+        try:
+            page = pdf[page_no - 1]
+            pix = page.get_pixmap(
+                matrix=fitz.Matrix(scale, scale),
+                alpha=False,
+            )
+            image = Image.frombytes(
+                "RGB",
+                [pix.width, pix.height],
+                pix.samples,
+            )
+        finally:
+            pdf.close()
+
+        data = pytesseract.image_to_data(
+            image,
+            lang="eng+fra",
+            config="--psm 6",
+            output_type=Output.DICT,
+        )
+
+        words: list[dict] = []
+        for index, text in enumerate(data.get("text", [])):
+            token = str(text or "").strip()
+            if not token:
+                continue
+
+            confidence_raw = data.get("conf", ["-1"])[index]
+            try:
+                confidence = float(confidence_raw)
+            except (TypeError, ValueError):
+                confidence = -1.0
+            if confidence < 35:
+                continue
+
+            left = float(data["left"][index]) / scale
+            top = float(data["top"][index]) / scale
+            width = float(data["width"][index]) / scale
+            height = float(data["height"][index]) / scale
+
+            words.append(
+                {
+                    "text": token,
+                    "x0": left,
+                    "x1": left + width,
+                    "top": top,
+                    "bottom": top + height,
+                    "ocr_confidence": confidence,
+                }
+            )
+
+        if words:
+            diagnostics.append(
+                f"Page {page_no}: used positioned OCR fallback "
+                f"({len(words)} words)."
+            )
+        else:
+            diagnostics.append(
+                f"Page {page_no}: positioned OCR produced no reliable words."
+            )
+        return words
+    except Exception as exc:
+        diagnostics.append(
+            f"Page {page_no}: positioned OCR fallback failed: {exc}"
+        )
         return []
 
 
@@ -508,6 +595,8 @@ def parse_statement_pdf(
     default_year = _default_year(full_text, period.period_start)
     pages_with_positioned_words = 0
     positioned_page_numbers: set[int] = set()
+    native_positioned_page_numbers: set[int] = set()
+    ocr_positioned_page_numbers: set[int] = set()
     vision_rows_added = 0
     active_date: date | None = None
 
@@ -519,11 +608,24 @@ def parse_statement_pdf(
     try:
         for page_num, page in enumerate(doc.pages, 1):
             raw_words = _positioned_words(page, page_num, diagnostics)
+            used_ocr_positioned = False
+            if not raw_words and enable_ocr:
+                raw_words = _ocr_positioned_words(
+                    pdf_bytes,
+                    page_no=page_num,
+                    diagnostics=diagnostics,
+                )
+                used_ocr_positioned = bool(raw_words)
+
             if not raw_words:
                 continue
 
             pages_with_positioned_words += 1
             positioned_page_numbers.add(page_num)
+            if used_ocr_positioned:
+                ocr_positioned_page_numbers.add(page_num)
+            else:
+                native_positioned_page_numbers.add(page_num)
             grouped_lines = group_words_into_lines(raw_words)
 
             page_balance_x = None
@@ -888,11 +990,17 @@ def parse_statement_pdf(
         transactions=transactions,
     )
 
-    if vision_rows_added and pages_with_positioned_words > 0:
+    if vision_rows_added and native_positioned_page_numbers:
         extraction_mode = "HYBRID_NATIVE_VISION"
+    elif vision_rows_added and ocr_positioned_page_numbers:
+        extraction_mode = "HYBRID_OCR_VISION"
     elif vision_rows_added:
         extraction_mode = "VISION_FALLBACK"
-    elif pages_with_positioned_words > 0:
+    elif native_positioned_page_numbers and ocr_positioned_page_numbers:
+        extraction_mode = "HYBRID_NATIVE_OCR"
+    elif ocr_positioned_page_numbers:
+        extraction_mode = "OCR_POSITIONED"
+    elif native_positioned_page_numbers:
         extraction_mode = "NATIVE_POSITIONED"
     elif any("Used OCR fallback." in item for item in diagnostics):
         extraction_mode = "OCR_TEXT_ONLY"
