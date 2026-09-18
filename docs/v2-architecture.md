@@ -2,63 +2,95 @@
 
 ## Design goals
 
-V2 separates document interpretation from financial arithmetic and policy
-decisions. The system must continue processing imperfect documents where safe,
-surface uncertainty explicitly, and preserve enough lineage to reproduce every
-number shown to an underwriter.
+V2 separates document interpretation from arithmetic and underwriting policy.
+It continues processing imperfect statements where safe, surfaces uncertainty,
+and preserves source lineage for every financial result.
+
+V2 is stateless by design. No SQL database is required.
 
 ## Processing flow
 
 1. **Document ingestion**
-   - hash every upload
-   - reject byte-identical duplicates
-   - assign a stable statement identifier
-   - retain source-file and page lineage
+   - SHA-256 each upload
+   - skip byte-identical duplicates
+   - assign stable statement IDs
+   - preserve source filename and page lineage
 
-2. **Extraction**
-   - native positioned PDF extraction first
-   - text fallback second
-   - OCR/vision fallback only when required
-   - never treat an LLM response as the canonical ledger
+2. **Bank/template profiling**
+   - identify supported Canadian bank signatures
+   - record bank/template confidence separately from transaction extraction
 
-3. **Validation**
+3. **Extraction**
+   - native positioned PDF text first
+   - positioned English/French OCR second
+   - guarded vision fallback only for pages that remain unreadable
+   - vision/OCR rows are never trusted merely because a model produced them
+
+4. **Validation**
    - opening balance + credits - debits = closing balance
+   - independent deposit/credit anchors where available
    - statement-period completeness
-   - duplicate and chronology checks
-   - extraction warnings remain attached to the statement
+   - duplicate-extraction checks
+   - deterministic extraction-quality score
+   - composite document-integrity score
 
-4. **Classification**
+5. **Classification**
    - deterministic rules first
    - known processors -> true revenue
-   - known lenders -> loan/MCA proceeds
-   - internal transfers, reversals and government/tax items -> non-revenue
-   - unresolved rows -> structured AI classification
-   - low-confidence or unsupported rows -> human review
+   - known lenders -> MCA/loan proceeds
+   - transfers, reversals and government/tax items -> non-revenue
+   - unresolved credits -> structured AI classification
+   - uncertain results fail closed to manual review
 
-5. **Metrics**
-   - all totals are calculated in Python
-   - complete months drive the underwriting revenue baseline when available
+6. **Metrics**
+   - totals calculated in Python
+   - verified complete months drive the revenue baseline when available
    - partial months remain visible as observed values
-   - projections are labeled estimates and do not silently drive a final offer
+   - debt service is normalized to a monthly basis
 
-6. **Funding policy**
-   - funding ceiling is deterministic
-   - revenue multiple, debt burden, term, factor rate and absolute caps are
-     explicit policy inputs
-   - the recommended advance is the minimum of all applicable ceilings
+7. **Decision-readiness gate**
+   - READY
+   - REVIEW_REQUIRED
+   - BLOCKED
+   - low extraction quality, failed reconciliation or high integrity concern
+     prevents an automated final offer
 
-7. **Auditability**
-   - immutable transaction IDs
-   - versioned classifications
-   - metric snapshots
-   - policy-versioned offers
-   - human overrides and system actions written as audit events
+8. **Policy and funding**
+   - deterministic scorecard
+   - explicit revenue multiple
+   - maximum total debt burden
+   - factor rate
+   - business-day term
+   - optional absolute cap
 
-## Current migration strategy
+9. **Auditability without a database**
+   - stable transaction IDs
+   - source filename/page lineage
+   - classification source and model name
+   - engine/model settings
+   - source-document SHA-256 hashes
+   - run ID and timestamp
+   - downloadable JSON analysis artifact
 
-The existing Streamlit application remains functional while V2 components are
-introduced behind it. The first migration integrates stable transaction IDs,
-statement-coverage warnings, safer partial-month handling, and modular
-classification. The REST API and PostgreSQL schema are introduced in parallel
-so the UI can later become a React/Next.js client without rewriting the core
-underwriting logic.
+10. **Regression testing**
+    - private redacted golden-statement corpus
+    - exact date/amount matching
+    - transaction recall
+    - credit/debit totals
+    - statement-period detection
+    - reconciliation expectations
+
+## Interfaces
+
+The core engine is UI-independent.
+
+- FastAPI exposes the V2 services.
+- React/Vite is the production-oriented dashboard.
+- Streamlit remains as a migration/workbench interface.
+
+## ML
+
+The PD model framework is intentionally separated from the deterministic
+funding-limit calculator. A PD model cannot be considered production-ready
+until real historical outcome labels are available and the model passes
+out-of-time validation, calibration, leakage, stability and governance review.
