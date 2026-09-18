@@ -10,6 +10,11 @@ from openai import OpenAI
 from engine_v2.funding import FundingPolicy, calculate_funding_capacity
 from engine_v2.metrics import select_revenue_baseline
 from engine_v2.pipeline import UnderwritingPipelineResult, analyze_statement_files
+from engine_v2.review import (
+    ReviewedTransaction,
+    TransactionOverride,
+    recalculate_after_review,
+)
 
 from .schemas import (
     AuditManifestResponse,
@@ -22,6 +27,9 @@ from .schemas import (
     McaPositionResponse,
     RevenueBaselineRequest,
     RevenueBaselineResponse,
+    ReviewRecalculationRequest,
+    ReviewRecalculationResponse,
+    OverrideAuditResponse,
     SourceDocumentAuditResponse,
     StatementAnalysisResponse,
     StatementSummaryResponse,
@@ -331,3 +339,84 @@ async def analyze_bank_statements(
         use_ai_classifier=use_ai_classifier,
     )
     return _analysis_response(result)
+
+
+@app.post(
+    "/v1/underwriting/recalculate-reviewed-transactions",
+    response_model=ReviewRecalculationResponse,
+)
+def recalculate_reviewed_transactions(
+    payload: ReviewRecalculationRequest,
+) -> ReviewRecalculationResponse:
+    try:
+        result = recalculate_after_review(
+            transactions=[
+                ReviewedTransaction(
+                    transaction_id=transaction.transaction_id,
+                    date=transaction.date,
+                    amount=transaction.amount,
+                    direction=transaction.direction,
+                    category=transaction.category,
+                    needs_review=transaction.needs_review,
+                )
+                for transaction in payload.transactions
+            ],
+            overrides=[
+                TransactionOverride(
+                    transaction_id=override.transaction_id,
+                    category=override.category,
+                    reason=override.reason,
+                )
+                for override in payload.overrides
+            ],
+            coverage_status_by_month=payload.coverage_status_by_month,
+            monthly_debt_service_by_lender=(
+                payload.monthly_debt_service_by_lender
+            ),
+            readiness_checks=payload.readiness_checks,
+        )
+    except ValueError as exc:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return ReviewRecalculationResponse(
+        categories_by_transaction=result.categories_by_transaction,
+        needs_review_by_transaction=result.needs_review_by_transaction,
+        monthly_true_revenue=result.monthly_true_revenue,
+        revenue_baseline=RevenueBaselineResponse(
+            average_monthly_true_revenue=(
+                result.revenue_baseline.average_monthly_true_revenue
+            ),
+            months_used=list(result.revenue_baseline.months_used),
+            partial_months_excluded=list(
+                result.revenue_baseline.partial_months_excluded
+            ),
+            basis=result.revenue_baseline.basis,
+            warning=result.revenue_baseline.warning,
+        ),
+        debt_ratios=DebtRatioResponse(
+            average_monthly_true_revenue=(
+                result.debt_ratios.average_monthly_true_revenue
+            ),
+            total_monthly_debt_service=(
+                result.debt_ratios.total_monthly_debt_service
+            ),
+            total_debt_ratio_pct=result.debt_ratios.total_debt_ratio_pct,
+            individual_ratios_pct=(
+                result.debt_ratios.individual_ratios_pct
+            ),
+        ),
+        remaining_review_count=result.remaining_review_count,
+        override_audit=[
+            OverrideAuditResponse(
+                transaction_id=event.transaction_id,
+                previous_category=event.previous_category,
+                new_category=event.new_category,
+                reason=event.reason,
+            )
+            for event in result.override_audit
+        ],
+        readiness_status=result.readiness_status,
+        automated_offer_allowed=result.automated_offer_allowed,
+        readiness_checks=result.readiness_checks,
+    )
