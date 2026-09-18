@@ -87,3 +87,47 @@ def test_statement_analysis_endpoint_skips_duplicate_uploads():
     assert len(body["statements"]) == 1
     assert len(body["skipped_duplicates"]) == 1
 
+
+
+def test_review_recalculation_endpoint_applies_manual_override():
+    response = client.post(
+        "/v1/underwriting/recalculate-reviewed-transactions",
+        json={
+            "transactions": [
+                {
+                    "transaction_id": "t1",
+                    "date": "2026-08-01",
+                    "amount": 10000,
+                    "direction": "credit",
+                    "category": "Review Required - Unidentified / Unusual Deposit",
+                    "needs_review": True
+                }
+            ],
+            "overrides": [
+                {
+                    "transaction_id": "t1",
+                    "category": "True Revenue - Customer Payment / Cheque",
+                    "reason": "Verified invoice payment"
+                }
+            ],
+            "coverage_status_by_month": {
+                "2026-08": "COMPLETE"
+            },
+            "monthly_debt_service_by_lender": {},
+            "readiness_checks": {
+                "documents": "PASS",
+                "ledger": "PASS",
+                "extraction_quality": "PASS",
+                "reconciliation": "PASS",
+                "integrity": "PASS",
+                "coverage": "PASS",
+                "classification": "REVIEW",
+                "revenue_baseline": "PASS"
+            }
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["monthly_true_revenue"]["2026-08"] == 10000
+    assert body["remaining_review_count"] == 0
+    assert body["readiness_status"] == "READY"
