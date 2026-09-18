@@ -2,6 +2,11 @@ export type StatementSummary = {
   statement_id: string;
   source_file: string;
   page_count: number;
+  bank_id: string | null;
+  bank_name: string | null;
+  extraction_quality_score: number | null;
+  extraction_quality_status: string | null;
+  extraction_mode: string | null;
   period_start: string | null;
   period_end: string | null;
   coverage_status: string;
@@ -57,6 +62,14 @@ export type DebtRatios = {
   individual_ratios_pct: Record<string, number>;
 };
 
+export type DecisionReadiness = {
+  status: string;
+  automated_offer_allowed: boolean;
+  blocking_reasons: string[];
+  review_reasons: string[];
+  checks: Record<string, string>;
+};
+
 export type StatementAnalysis = {
   statements: StatementSummary[];
   transactions: ClassifiedTransaction[];
@@ -64,6 +77,7 @@ export type StatementAnalysis = {
   monthly_true_revenue: Record<string, number>;
   revenue_baseline: RevenueBaseline | null;
   debt_ratios: DebtRatios | null;
+  decision_readiness: DecisionReadiness | null;
   skipped_duplicates: string[];
   warnings: string[];
 };
