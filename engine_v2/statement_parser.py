@@ -6,7 +6,7 @@ import re
 from collections import defaultdict
 from datetime import date
 from decimal import Decimal
-from typing import Iterable
+from typing import Any, Iterable
 
 import pdfplumber
 from pydantic import BaseModel, Field
@@ -23,6 +23,10 @@ from .reconciliation import reconcile_statement
 from .statement_integrity import (
     StatementIntegrityAssessment,
     assess_statement_integrity,
+)
+from .vision_ledger import (
+    extract_page_ledger_with_vision,
+    render_pdf_page_png,
 )
 
 
@@ -365,6 +369,7 @@ def _build_transaction(
     direction: TransactionDirection,
     occurrence: int,
     raw_text: str,
+    running_balance: Decimal | None = None,
 ) -> TransactionRecord:
     return TransactionRecord(
         transaction_id=stable_transaction_id(
@@ -383,6 +388,7 @@ def _build_transaction(
         description=description,
         amount=amount,
         direction=direction,
+        running_balance=running_balance,
         raw_text=raw_text,
     )
 
@@ -392,6 +398,9 @@ def parse_statement_pdf(
     *,
     source_file: str,
     enable_ocr: bool = False,
+    vision_client: Any | None = None,
+    enable_vision_fallback: bool = False,
+    vision_model: str = "gpt-5.6-terra",
 ) -> ParsedStatement:
     file_sha256 = hashlib.sha256(pdf_bytes).hexdigest()
     statement_id = stable_statement_id(file_sha256=file_sha256)
@@ -492,6 +501,8 @@ def parse_statement_pdf(
     is_nbc = bank_id == "NBC"
     default_year = _default_year(full_text, period.period_start)
     pages_with_positioned_words = 0
+    positioned_page_numbers: set[int] = set()
+    vision_rows_added = 0
     active_date: date | None = None
 
     debit_x_min, debit_x_max = 200.0, 370.0
@@ -506,6 +517,7 @@ def parse_statement_pdf(
                 continue
 
             pages_with_positioned_words += 1
+            positioned_page_numbers.add(page_num)
             grouped_lines = group_words_into_lines(raw_words)
 
             page_balance_x = None
@@ -719,6 +731,130 @@ def parse_statement_pdf(
     finally:
         doc.close()
 
+    if enable_vision_fallback and vision_client is not None:
+        extracted_pages = {
+            transaction.page
+            for transaction in transactions
+            if transaction.page is not None
+        }
+        if transactions:
+            vision_pages = [
+                page_number
+                for page_number in range(1, integrity.page_count + 1)
+                if (
+                    page_number not in positioned_page_numbers
+                    and page_number not in extracted_pages
+                )
+            ]
+        else:
+            vision_pages = list(range(1, integrity.page_count + 1))
+
+        existing_signatures = {
+            (
+                transaction.page,
+                transaction.transaction_date,
+                transaction.direction.value,
+                transaction.amount,
+                transaction.description.strip().upper(),
+            )
+            for transaction in transactions
+        }
+
+        for page_number in vision_pages:
+            try:
+                png_bytes = render_pdf_page_png(
+                    pdf_bytes,
+                    page_number=page_number,
+                )
+                vision_page = extract_page_ledger_with_vision(
+                    client=vision_client,
+                    png_bytes=png_bytes,
+                    page_number=page_number,
+                    model=vision_model,
+                )
+            except Exception as exc:
+                diagnostics.append(
+                    f"Page {page_number}: vision fallback failed: {exc}"
+                )
+                continue
+
+            for warning in vision_page.warnings:
+                diagnostics.append(
+                    f"Page {page_number}: vision warning: {warning}"
+                )
+
+            for vision_transaction in vision_page.transactions:
+                if vision_transaction.credit is not None:
+                    direction = TransactionDirection.CREDIT
+                    amount = vision_transaction.credit
+                else:
+                    direction = TransactionDirection.DEBIT
+                    amount = vision_transaction.debit
+
+                if amount is None:
+                    continue
+
+                signature = (
+                    page_number,
+                    vision_transaction.transaction_date,
+                    direction.value,
+                    amount,
+                    vision_transaction.description.strip().upper(),
+                )
+                if signature in existing_signatures:
+                    continue
+
+                key = (
+                    page_number,
+                    vision_transaction.transaction_date,
+                    vision_transaction.description,
+                    amount,
+                    direction.value,
+                )
+                occurrence = occurrence_by_key[key]
+                occurrence_by_key[key] += 1
+
+                transaction = _build_transaction(
+                    statement_id=statement_id,
+                    source_file=source_file,
+                    page=page_number,
+                    transaction_date=vision_transaction.transaction_date,
+                    description=vision_transaction.description,
+                    amount=amount,
+                    direction=direction,
+                    occurrence=occurrence,
+                    raw_text=vision_transaction.evidence_text,
+                    running_balance=vision_transaction.running_balance,
+                )
+                transactions.append(transaction)
+                existing_signatures.add(signature)
+                vision_rows_added += 1
+
+                if direction == TransactionDirection.DEBIT:
+                    mca = build_mca_debit(
+                        transaction_date=vision_transaction.transaction_date,
+                        description=vision_transaction.description,
+                        amount=float(amount),
+                        transaction_id=transaction.transaction_id,
+                    )
+                    if mca:
+                        mca_debits.append(mca)
+
+        if vision_rows_added:
+            diagnostics.append(
+                f"Vision fallback added {vision_rows_added} transaction row(s). "
+                "These rows remain subject to reconciliation and manual review."
+            )
+
+    total_debits = sum(
+        (
+            transaction.amount
+            for transaction in transactions
+            if transaction.direction == TransactionDirection.DEBIT
+        ),
+        Decimal("0"),
+    )
+
     if credit_anchor is None and opening_balance is not None and closing_balance is not None:
         implied_credits = closing_balance - opening_balance + total_debits
         if implied_credits >= 0:
@@ -746,7 +882,11 @@ def parse_statement_pdf(
         transactions=transactions,
     )
 
-    if pages_with_positioned_words > 0:
+    if vision_rows_added and pages_with_positioned_words > 0:
+        extraction_mode = "HYBRID_NATIVE_VISION"
+    elif vision_rows_added:
+        extraction_mode = "VISION_FALLBACK"
+    elif pages_with_positioned_words > 0:
         extraction_mode = "NATIVE_POSITIONED"
     elif any("Used OCR fallback." in item for item in diagnostics):
         extraction_mode = "OCR_TEXT_ONLY"
