@@ -37,6 +37,7 @@ from .schemas import (
     SourceDocumentAuditResponse,
     StatementAnalysisResponse,
     StatementSummaryResponse,
+    UnderwritingFeaturesResponse,
 )
 
 
@@ -200,6 +201,12 @@ def _analysis_response(
             individual_ratios_pct=result.debt_ratios.individual_ratios_pct,
         )
 
+    features = None
+    if result.features:
+        features = UnderwritingFeaturesResponse(
+            **asdict(result.features)
+        )
+
     readiness = None
     if result.decision_readiness:
         readiness = DecisionReadinessResponse(
@@ -247,6 +254,7 @@ def _analysis_response(
         monthly_true_revenue=result.monthly_true_revenue,
         revenue_baseline=baseline,
         debt_ratios=debt_ratios,
+        features=features,
         decision_readiness=readiness,
         audit_manifest=audit_manifest,
         skipped_duplicates=result.skipped_duplicates,
