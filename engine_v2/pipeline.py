@@ -94,6 +94,7 @@ def analyze_statement_files(
     *,
     files: list[tuple[str, bytes]],
     ai_client: Any | None = None,
+    vision_client: Any | None = None,
     classifier_model: str = "gpt-5.6-terra",
     enable_ocr: bool = False,
     enable_vision_fallback: bool = False,
@@ -102,7 +103,11 @@ def analyze_statement_files(
     batch: BatchIngestionResult = parse_statement_batch(
         files,
         enable_ocr=enable_ocr,
-        vision_client=ai_client,
+        vision_client=(
+            vision_client
+            if vision_client is not None
+            else ai_client
+        ),
         enable_vision_fallback=enable_vision_fallback,
         vision_model=vision_model,
     )
