@@ -73,6 +73,7 @@ function TransactionTable({
 export default function App() {
   const [files, setFiles] = useState<File[]>([]);
   const [enableOcr, setEnableOcr] = useState(false);
+  const [enableVision, setEnableVision] = useState(true);
   const [useAi, setUseAi] = useState(true);
   const [analysis, setAnalysis] = useState<StatementAnalysis | null>(null);
   const [working, setWorking] = useState(false);
@@ -111,6 +112,7 @@ export default function App() {
       setAnalysis(
         await analyzeStatements(files, {
           enableOcr,
+          enableVisionFallback: enableVision,
           useAiClassifier: useAi,
         }),
       );
@@ -179,7 +181,15 @@ export default function App() {
               checked={enableOcr}
               onChange={(event) => setEnableOcr(event.target.checked)}
             />
-            Enable OCR fallback
+            Enable OCR text fallback
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              checked={enableVision}
+              onChange={(event) => setEnableVision(event.target.checked)}
+            />
+            Vision fallback for unreadable pages
           </label>
           <button
             disabled={!files.length || working}
