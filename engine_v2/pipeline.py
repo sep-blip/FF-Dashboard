@@ -6,6 +6,7 @@ from typing import Any
 
 from .ai_classifier import classify_unresolved_transactions
 from .audit_manifest import AuditManifest, build_audit_manifest
+from .balance_metrics import calculate_balance_metrics
 from .batch_ingestion import BatchIngestionResult, parse_statement_batch
 from .classification import classify_by_rules
 from .constants import NON_REVENUE_WASH, REVIEW_REQUIRED
@@ -319,6 +320,8 @@ def analyze_statement_files(
         monthly_debt_service_by_lender=monthly_debt,
     )
 
+    balance_metrics = calculate_balance_metrics(result.statements)
+
     result.features = calculate_underwriting_features(
         transactions=result.transactions,
         monthly_true_revenue=result.monthly_true_revenue,
@@ -332,12 +335,22 @@ def analyze_statement_files(
             if result.revenue_baseline
             else 0.0
         ),
+        average_daily_balance=balance_metrics.average_daily_balance,
+        negative_days=balance_metrics.negative_days,
+        balance_observed_days=balance_metrics.observed_days,
         mca_position_count=len(result.mca_positions),
         monthly_mca_debt_service=(
             result.debt_ratios.total_monthly_debt_service
             if result.debt_ratios else 0.0
         ),
     )
+
+    if balance_metrics.excluded_statements:
+        result.warnings.append(
+            "Average daily balance / negative-day metrics excluded "
+            "unreconciled or incomplete-balance statements: "
+            + ", ".join(balance_metrics.excluded_statements)
+        )
 
     result.decision_readiness = assess_decision_readiness(
         statements=result.statements,
