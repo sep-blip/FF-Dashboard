@@ -61,6 +61,9 @@ def recalculate_after_review(
     coverage_status_by_month: Mapping[str, str],
     monthly_debt_service_by_lender: Mapping[str, float],
     readiness_checks: Mapping[str, str] | None = None,
+    average_daily_balance: float = 0.0,
+    negative_days: int = 0,
+    balance_observed_days: int = 0,
 ) -> ReviewRecalculation:
     allowed = set(ALLOWED_CATEGORIES)
     by_id = {transaction.transaction_id: transaction for transaction in transactions}
@@ -165,6 +168,9 @@ def recalculate_after_review(
         monthly_mca_debt_service=(
             debt_ratios.total_monthly_debt_service
         ),
+        average_daily_balance=average_daily_balance,
+        negative_days=negative_days,
+        balance_observed_days=balance_observed_days,
     )
 
     remaining = sum(
