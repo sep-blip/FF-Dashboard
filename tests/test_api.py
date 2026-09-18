@@ -52,3 +52,37 @@ def test_revenue_baseline_endpoint_excludes_partial_when_complete_exists():
     body = response.json()
     assert body["average_monthly_true_revenue"] == 110000
     assert body["partial_months_excluded"] == ["2026-09"]
+
+
+def test_statement_analysis_endpoint_degrades_gracefully_without_ai():
+    response = client.post(
+        "/v1/documents/bank-statements/analyze",
+        files=[
+            ("files", ("statement.pdf", b"not-a-real-pdf", "application/pdf")),
+        ],
+        data={
+            "enable_ocr": "false",
+            "use_ai_classifier": "false",
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["statements"]) == 1
+    assert body["transactions"] == []
+    assert body["mca_positions"] == []
+
+
+def test_statement_analysis_endpoint_skips_duplicate_uploads():
+    payload = b"duplicate-bytes"
+    response = client.post(
+        "/v1/documents/bank-statements/analyze",
+        files=[
+            ("files", ("a.pdf", payload, "application/pdf")),
+            ("files", ("b.pdf", payload, "application/pdf")),
+        ],
+        data={"use_ai_classifier": "false"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["statements"]) == 1
+    assert len(body["skipped_duplicates"]) == 1
