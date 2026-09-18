@@ -15,3 +15,7 @@ secrets.toml
 .vscode/
 .idea/
 .DS_Store
+
+# Generated model artifacts / local storage
+artifacts/
+var/uploads/
