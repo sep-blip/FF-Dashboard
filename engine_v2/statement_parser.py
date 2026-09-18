@@ -18,6 +18,10 @@ from .models import CoverageStatus, StatementCoverage, TransactionDirection, Tra
 from .pdf_integrity import PdfIntegrityReport, analyze_pdf_integrity
 from .period import extract_statement_period
 from .reconciliation import reconcile_statement
+from .statement_integrity import (
+    StatementIntegrityAssessment,
+    assess_statement_integrity,
+)
 
 
 class ParsedStatement(BaseModel):
@@ -29,6 +33,7 @@ class ParsedStatement(BaseModel):
     period_end: date | None = None
     coverage: StatementCoverage | None = None
     integrity: PdfIntegrityReport | None = None
+    composite_integrity: StatementIntegrityAssessment | None = None
     opening_balance: Decimal | None = None
     closing_balance: Decimal | None = None
     credit_anchor: Decimal | None = None
@@ -693,6 +698,13 @@ def parse_statement_pdf(
     if reconciliation.warning:
         diagnostics.append(reconciliation.warning)
 
+    composite_integrity = assess_statement_integrity(
+        structural=integrity,
+        coverage=coverage,
+        reconciliation=reconciliation,
+        transactions=transactions,
+    )
+
     return ParsedStatement(
         statement_id=statement_id,
         source_file=source_file,
@@ -702,6 +714,7 @@ def parse_statement_pdf(
         period_end=period.period_end,
         coverage=coverage,
         integrity=integrity,
+        composite_integrity=composite_integrity,
         opening_balance=opening_balance,
         closing_balance=closing_balance,
         credit_anchor=credit_anchor,
