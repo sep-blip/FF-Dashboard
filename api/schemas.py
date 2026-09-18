@@ -221,3 +221,39 @@ class CreditProfileResponse(BaseModel):
     evidence: dict[str, str] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
     model_name: str | None = None
+
+
+class ScorecardRequest(BaseModel):
+    average_monthly_true_revenue: float = Field(ge=0)
+    revenue_trend_pct: float
+    average_deposit_count: int = Field(ge=0)
+    revenue_volatility_pct: float = Field(ge=0)
+    average_daily_balance: float = Field(ge=0)
+    mca_position_count: int = Field(ge=0)
+    mca_burden_pct: float = Field(ge=0)
+    borrowing_velocity: str
+    returned_ach_or_missed_payments: int = Field(ge=0)
+    negative_days: int = Field(ge=0)
+    time_in_business_months: int = Field(ge=0)
+    industry_score: int
+    seasonality_score: int
+    credit_score: int = Field(ge=300, le=900)
+    public_records: str
+    bank_verification: str
+    revenue_concentration_pct: float = Field(ge=0)
+    suspected_fraud: bool = False
+    severe_wash_transactions: bool = False
+    active_lender_default: bool = False
+
+
+class ScorecardResponse(BaseModel):
+    policy_version: str
+    score: int
+    max_score: int
+    grade: str
+    risk_tier: str
+    revenue_advance_multiple: float
+    max_total_debt_burden_pct: float
+    hard_stop: bool
+    hard_stop_reasons: list[str]
+    breakdown: dict[str, int]
