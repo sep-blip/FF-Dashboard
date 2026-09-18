@@ -11,7 +11,9 @@ from typing import Iterable
 import pdfplumber
 from pydantic import BaseModel, Field
 
+from .bank_profiles import detect_bank_profile
 from .coverage import calculate_statement_coverage
+from .extraction_quality import ExtractionQuality, assess_extraction_quality
 from .identifiers import stable_statement_id, stable_transaction_id
 from .mca import McaDebit, build_mca_debit
 from .models import CoverageStatus, StatementCoverage, TransactionDirection, TransactionRecord
@@ -29,6 +31,9 @@ class ParsedStatement(BaseModel):
     source_file: str
     file_sha256: str
     page_count: int = 0
+    bank_id: str | None = None
+    bank_name: str | None = None
+    extraction_quality: ExtractionQuality | None = None
     period_start: date | None = None
     period_end: date | None = None
     coverage: StatementCoverage | None = None
@@ -401,14 +406,31 @@ def parse_statement_pdf(
 
     if not full_text:
         diagnostics.append("No usable text could be extracted from the PDF.")
+        quality = assess_extraction_quality(
+            extraction_mode="NO_TEXT",
+            bank_id=None,
+            page_count=integrity.page_count,
+            pages_with_positioned_words=0,
+            transaction_count=0,
+            period_detected=False,
+            credit_anchor_detected=False,
+            balances_detected=False,
+            reconciliation_status=None,
+        )
+        diagnostics.extend(quality.warnings)
         return ParsedStatement(
             statement_id=statement_id,
             source_file=source_file,
             file_sha256=file_sha256,
             integrity=integrity,
+            extraction_quality=quality,
             page_count=integrity.page_count,
             diagnostics=diagnostics,
         )
+
+    bank_profile = detect_bank_profile(full_text)
+    bank_id = bank_profile.bank_id if bank_profile else None
+    bank_name = bank_profile.display_name if bank_profile else None
 
     period = extract_statement_period(full_text)
     coverage = None
@@ -434,11 +456,28 @@ def parse_statement_pdf(
         doc = pdfplumber.open(io.BytesIO(pdf_bytes))
     except Exception as exc:
         diagnostics.append(f"Could not open PDF for positioned parsing: {exc}")
+        quality = assess_extraction_quality(
+            extraction_mode="TEXT_ONLY",
+            bank_id=bank_id,
+            page_count=integrity.page_count,
+            pages_with_positioned_words=0,
+            transaction_count=0,
+            period_detected=bool(period.period_start and period.period_end),
+            credit_anchor_detected=credit_anchor is not None,
+            balances_detected=(
+                opening_balance is not None and closing_balance is not None
+            ),
+            reconciliation_status=None,
+        )
+        diagnostics.extend(quality.warnings)
         return ParsedStatement(
             statement_id=statement_id,
             source_file=source_file,
             file_sha256=file_sha256,
             page_count=integrity.page_count,
+            bank_id=bank_id,
+            bank_name=bank_name,
+            extraction_quality=quality,
             period_start=period.period_start,
             period_end=period.period_end,
             coverage=coverage,
@@ -450,8 +489,9 @@ def parse_statement_pdf(
             diagnostics=diagnostics,
         )
 
-    is_nbc = "BANQUE NATIONALE" in full_text.upper()
+    is_nbc = bank_id == "NBC"
     default_year = _default_year(full_text, period.period_start)
+    pages_with_positioned_words = 0
     active_date: date | None = None
 
     debit_x_min, debit_x_max = 200.0, 370.0
@@ -465,6 +505,7 @@ def parse_statement_pdf(
             if not raw_words:
                 continue
 
+            pages_with_positioned_words += 1
             grouped_lines = group_words_into_lines(raw_words)
 
             page_balance_x = None
@@ -705,11 +746,38 @@ def parse_statement_pdf(
         transactions=transactions,
     )
 
+    if pages_with_positioned_words > 0:
+        extraction_mode = "NATIVE_POSITIONED"
+    elif any("Used OCR fallback." in item for item in diagnostics):
+        extraction_mode = "OCR_TEXT_ONLY"
+    elif full_text:
+        extraction_mode = "TEXT_ONLY"
+    else:
+        extraction_mode = "NO_TEXT"
+
+    extraction_quality = assess_extraction_quality(
+        extraction_mode=extraction_mode,
+        bank_id=bank_id,
+        page_count=integrity.page_count,
+        pages_with_positioned_words=pages_with_positioned_words,
+        transaction_count=len(transactions),
+        period_detected=bool(period.period_start and period.period_end),
+        credit_anchor_detected=credit_anchor is not None,
+        balances_detected=(
+            opening_balance is not None and closing_balance is not None
+        ),
+        reconciliation_status=reconciliation.status.value,
+    )
+    diagnostics.extend(extraction_quality.warnings)
+
     return ParsedStatement(
         statement_id=statement_id,
         source_file=source_file,
         file_sha256=file_sha256,
         page_count=integrity.page_count,
+        bank_id=bank_id,
+        bank_name=bank_name,
+        extraction_quality=extraction_quality,
         period_start=period.period_start,
         period_end=period.period_end,
         coverage=coverage,
