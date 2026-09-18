@@ -115,20 +115,3 @@ class StatementAnalysisResponse(BaseModel):
     skipped_duplicates: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
 
-
-class ApplicationCreateRequest(BaseModel):
-    legal_name: str = Field(min_length=1, max_length=300)
-    dba_name: str | None = Field(default=None, max_length=300)
-    industry_code: str | None = Field(default=None, max_length=100)
-    requested_amount: float | None = Field(default=None, ge=0)
-    requested_term_business_days: int | None = Field(default=None, gt=0)
-
-
-class ApplicationCreateResponse(BaseModel):
-    merchant_id: str
-    application_id: str
-
-
-class PersistedStatementAnalysisResponse(StatementAnalysisResponse):
-    application_id: str
-    persisted: bool = True
