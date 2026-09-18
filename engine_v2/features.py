@@ -39,11 +39,11 @@ def calculate_underwriting_features(
     monthly_true_revenue: dict[str, float],
     baseline_months: Iterable[str],
     average_monthly_true_revenue: float,
+    mca_position_count: int,
+    monthly_mca_debt_service: float,
     average_daily_balance: float = 0.0,
     negative_days: int = 0,
     balance_observed_days: int = 0,
-    mca_position_count: int,
-    monthly_mca_debt_service: float,
 ) -> UnderwritingFeatures:
     transactions = list(transactions)
     credits = [
