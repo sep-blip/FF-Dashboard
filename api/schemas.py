@@ -53,6 +53,11 @@ class StatementSummaryResponse(BaseModel):
     statement_id: str
     source_file: str
     page_count: int
+    bank_id: str | None = None
+    bank_name: str | None = None
+    extraction_quality_score: int | None = None
+    extraction_quality_status: str | None = None
+    extraction_mode: str | None = None
     period_start: str | None = None
     period_end: str | None = None
     coverage_status: str
