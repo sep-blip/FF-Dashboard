@@ -87,6 +87,23 @@ export type AuditManifest = {
   }>;
 };
 
+export type CreditProfile = {
+  source_file: string;
+  sha256: string;
+  owner_name: string | null;
+  fico_score: number | null;
+  total_high_credit: number | null;
+  revolving_credit_utilization_pct: number | null;
+  active_collections_count: number | null;
+  total_collections_amount: number | null;
+  bankruptcies_found: boolean | null;
+  number_of_mortgages: number | null;
+  mortgage_ltv_details: string | null;
+  evidence: Record<string, string>;
+  warnings: string[];
+  model_name: string | null;
+};
+
 export type ReviewRecalculation = {
   categories_by_transaction: Record<string, string>;
   needs_review_by_transaction: Record<string, boolean>;
