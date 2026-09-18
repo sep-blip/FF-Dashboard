@@ -100,6 +100,9 @@ export async function recalculateReviewedTransactions(input: {
   coverageStatusByMonth: Record<string, string>;
   monthlyDebtServiceByLender: Record<string, number>;
   readinessChecks: Record<string, string>;
+  averageDailyBalance: number;
+  negativeDays: number;
+  balanceObservedDays: number;
 }): Promise<ReviewRecalculation> {
   const response = await fetch(
     `${API_BASE_URL}/v1/underwriting/recalculate-reviewed-transactions`,
@@ -125,6 +128,9 @@ export async function recalculateReviewedTransactions(input: {
         monthly_debt_service_by_lender:
           input.monthlyDebtServiceByLender,
         readiness_checks: input.readinessChecks,
+        average_daily_balance: input.averageDailyBalance,
+        negative_days: input.negativeDays,
+        balance_observed_days: input.balanceObservedDays,
       }),
     },
   );
