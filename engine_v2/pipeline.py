@@ -109,10 +109,11 @@ def analyze_statement_files(
     pending_by_id: dict[str, ClassifiedTransaction] = {}
 
     for statement in batch.statements:
-        if statement.integrity and statement.integrity.status != "LOW_CONCERN":
+        effective_integrity = statement.composite_integrity or statement.integrity
+        if effective_integrity and effective_integrity.status != "LOW_CONCERN":
             result.warnings.append(
-                f"{statement.source_file}: PDF integrity review status "
-                f"{statement.integrity.status} ({statement.integrity.score}/100)."
+                f"{statement.source_file}: statement integrity review status "
+                f"{effective_integrity.status} ({effective_integrity.score}/100)."
             )
         if statement.coverage and statement.coverage.warning:
             result.warnings.append(
