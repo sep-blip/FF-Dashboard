@@ -284,6 +284,8 @@ if 'pdf_integrity_reports' not in st.session_state:
     st.session_state.pdf_integrity_reports = []
 if 'full_ledger' not in st.session_state:
     st.session_state.full_ledger = None
+if 'revenue_baseline' not in st.session_state:
+    st.session_state.revenue_baseline = None
 
 
 # ==============================================================================
@@ -779,6 +781,20 @@ with tab1:
         st.session_state.expected_credits = expected_credits
         st.session_state.statement_coverage = coverage_records
         st.session_state.pdf_integrity_reports = integrity_records
+        st.session_state.revenue_baseline = (
+            {
+                "average_monthly_true_revenue": (
+                    pipeline_result.revenue_baseline.average_monthly_true_revenue
+                ),
+                "months_used": list(pipeline_result.revenue_baseline.months_used),
+                "partial_months_excluded": list(
+                    pipeline_result.revenue_baseline.partial_months_excluded
+                ),
+                "basis": pipeline_result.revenue_baseline.basis,
+                "warning": pipeline_result.revenue_baseline.warning,
+            }
+            if pipeline_result.revenue_baseline else None
+        )
         st.session_state.mca_positions = [
             {
                 "lender": position.lender,
@@ -1045,14 +1061,26 @@ with tab1:
             delta_color="off"
         )
 
-        num_active_months = (
-            st.session_state.transactions["month"].nunique()
-            if not st.session_state.transactions.empty else 1
-        )
+        baseline = st.session_state.get("revenue_baseline") or {}
+        baseline_avg = baseline.get("average_monthly_true_revenue")
+        if baseline_avg is None:
+            num_active_months = (
+                st.session_state.transactions["month"].nunique()
+                if not st.session_state.transactions.empty else 1
+            )
+            baseline_avg = (
+                total_true / num_active_months
+                if num_active_months > 0 else 0.0
+            )
         kpi3.metric(
             "Avg Monthly True Revenue",
-            f"${(total_true / num_active_months if num_active_months > 0 else 0.0):,.2f}"
+            f"${baseline_avg:,.2f}"
         )
+        if baseline.get("basis"):
+            st.caption(
+                f"Revenue baseline: {baseline['basis']} | "
+                f"Months used: {', '.join(baseline.get('months_used', [])) or 'N/A'}"
+            )
         kpi4.metric(
             "Non-Revenue Proportion",
             f"{((total_gross - total_true) / total_gross * 100 if total_gross > 0 else 0):.1f}%"
@@ -1476,8 +1504,18 @@ with tab3:
         if len(wash_df) >= 3:
             wash_transactions_detected = True
 
-        nsf_df = df[df['category'].str.contains('NSF', case=False, na=False)]
-        auto_payment_perf = len(nsf_df[nsf_df['tx_type'] == 'debit']) + len(nsf_df[nsf_df['tx_type'] == 'credit'])
+        full_ledger = st.session_state.get("full_ledger")
+        if full_ledger is not None and not full_ledger.empty:
+            nsf_mask = full_ledger["description"].str.contains(
+                r"\bNSF\b|RETURNED\s+ITEM|ITEM\s+RETURNED|"
+                r"\bUNPAID\b|DISHONOURED|FRAIS\s+EFFET\s+RET",
+                case=False,
+                regex=True,
+                na=False,
+            )
+            auto_payment_perf = int(nsf_mask.sum())
+        else:
+            auto_payment_perf = 0
 
     st.success("### 🤖 AUTOMATED FINANCIAL metrics \n**These fields are dynamically calculated by the transaction ledger.**")
     if partial_months_excluded:
