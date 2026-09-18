@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Mapping
 
 from .constants import ALLOWED_CATEGORIES, REVIEW_REQUIRED
+from .features import UnderwritingFeatures, calculate_underwriting_features
 from .metrics import (
     DebtRatioMetrics,
     RevenueBaseline,
@@ -16,6 +17,7 @@ from .metrics import (
 class ReviewedTransaction:
     transaction_id: str
     date: str
+    description: str
     amount: float
     direction: str
     category: str
@@ -44,6 +46,7 @@ class ReviewRecalculation:
     monthly_true_revenue: dict[str, float] = field(default_factory=dict)
     revenue_baseline: RevenueBaseline | None = None
     debt_ratios: DebtRatioMetrics | None = None
+    features: UnderwritingFeatures | None = None
     remaining_review_count: int = 0
     override_audit: list[OverrideAuditEvent] = field(default_factory=list)
     readiness_status: str = "REVIEW_REQUIRED"
@@ -139,6 +142,31 @@ def recalculate_after_review(
         monthly_debt_service_by_lender=monthly_debt_service_by_lender,
     )
 
+    adjusted_transactions = [
+        ReviewedTransaction(
+            transaction_id=transaction.transaction_id,
+            date=transaction.date,
+            description=transaction.description,
+            amount=transaction.amount,
+            direction=transaction.direction,
+            category=categories[transaction.transaction_id],
+            needs_review=needs_review[transaction.transaction_id],
+        )
+        for transaction in transactions
+    ]
+    features = calculate_underwriting_features(
+        transactions=adjusted_transactions,
+        monthly_true_revenue=monthly,
+        baseline_months=baseline.months_used,
+        average_monthly_true_revenue=(
+            baseline.average_monthly_true_revenue
+        ),
+        mca_position_count=len(monthly_debt_service_by_lender),
+        monthly_mca_debt_service=(
+            debt_ratios.total_monthly_debt_service
+        ),
+    )
+
     remaining = sum(
         1
         for transaction in transactions
@@ -165,6 +193,7 @@ def recalculate_after_review(
         monthly_true_revenue=monthly,
         revenue_baseline=baseline,
         debt_ratios=debt_ratios,
+        features=features,
         remaining_review_count=remaining,
         override_audit=audit,
         readiness_status=readiness_status,
