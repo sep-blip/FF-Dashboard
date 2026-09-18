@@ -131,3 +131,19 @@ def test_review_recalculation_endpoint_applies_manual_override():
     assert body["monthly_true_revenue"]["2026-08"] == 10000
     assert body["remaining_review_count"] == 0
     assert body["readiness_status"] == "READY"
+
+
+def test_credit_report_endpoint_requires_openai_key(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    response = client.post(
+        "/v1/documents/credit-report/analyze",
+        files=[
+            (
+                "file",
+                ("credit.pdf", b"not-a-real-pdf", "application/pdf"),
+            )
+        ],
+        data={"enable_ocr": "false"},
+    )
+    assert response.status_code == 503
+    assert "OPENAI_API_KEY" in response.json()["detail"]
