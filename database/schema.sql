@@ -35,7 +35,8 @@ CREATE TABLE IF NOT EXISTS documents (
 );
 
 CREATE TABLE IF NOT EXISTS statements (
-    statement_id TEXT PRIMARY KEY,
+    statement_record_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    statement_id TEXT NOT NULL,
     document_id UUID NOT NULL REFERENCES documents(document_id) ON DELETE CASCADE,
     account_fingerprint TEXT,
     period_start DATE,
@@ -51,13 +52,15 @@ CREATE TABLE IF NOT EXISTS statements (
     integrity_score INTEGER,
     integrity_status TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (document_id, statement_id),
     CHECK (coverage_pct IS NULL OR (coverage_pct >= 0 AND coverage_pct <= 100)),
     CHECK (integrity_score IS NULL OR (integrity_score >= 0 AND integrity_score <= 100))
 );
 
 CREATE TABLE IF NOT EXISTS transactions (
-    transaction_id TEXT PRIMARY KEY,
-    statement_id TEXT NOT NULL REFERENCES statements(statement_id) ON DELETE CASCADE,
+    transaction_record_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    transaction_id TEXT NOT NULL,
+    statement_record_id UUID NOT NULL REFERENCES statements(statement_record_id) ON DELETE CASCADE,
     transaction_date DATE NOT NULL,
     description TEXT NOT NULL,
     amount NUMERIC(18,2) NOT NULL,
@@ -66,13 +69,15 @@ CREATE TABLE IF NOT EXISTS transactions (
     source_page INTEGER,
     raw_text TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (statement_record_id, transaction_id),
     CHECK (amount > 0),
     CHECK (direction IN ('credit', 'debit'))
 );
 
 CREATE TABLE IF NOT EXISTS transaction_classifications (
     classification_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    transaction_id TEXT NOT NULL REFERENCES transactions(transaction_id) ON DELETE CASCADE,
+    transaction_record_id UUID NOT NULL REFERENCES transactions(transaction_record_id) ON DELETE CASCADE,
+    transaction_id TEXT NOT NULL,
     category TEXT NOT NULL,
     subcategory TEXT,
     confidence NUMERIC(5,4),
@@ -86,7 +91,7 @@ CREATE TABLE IF NOT EXISTS transaction_classifications (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_current_transaction_classification
-    ON transaction_classifications(transaction_id)
+    ON transaction_classifications(transaction_record_id)
     WHERE is_current = TRUE;
 
 CREATE TABLE IF NOT EXISTS mca_positions (
@@ -185,7 +190,9 @@ CREATE TABLE IF NOT EXISTS audit_events (
 
 CREATE INDEX IF NOT EXISTS idx_documents_application ON documents(application_id);
 CREATE INDEX IF NOT EXISTS idx_statements_document ON statements(document_id);
-CREATE INDEX IF NOT EXISTS idx_transactions_statement_date ON transactions(statement_id, transaction_date);
+CREATE INDEX IF NOT EXISTS idx_statements_logical_id ON statements(statement_id);
+CREATE INDEX IF NOT EXISTS idx_transactions_statement_date ON transactions(statement_record_id, transaction_date);
+CREATE INDEX IF NOT EXISTS idx_transactions_logical_id ON transactions(transaction_id);
 CREATE INDEX IF NOT EXISTS idx_mca_positions_application ON mca_positions(application_id);
 CREATE INDEX IF NOT EXISTS idx_metrics_application_created ON underwriting_metrics(application_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_offers_application_created ON offers(application_id, created_at DESC);
