@@ -110,6 +110,7 @@ export async function recalculateReviewedTransactions(input: {
         transactions: input.transactions.map((transaction) => ({
           transaction_id: transaction.transaction_id,
           date: transaction.date,
+          description: transaction.description,
           amount: transaction.amount,
           direction: transaction.direction,
           category: transaction.category,
