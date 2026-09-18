@@ -24,6 +24,9 @@ class UnderwritingFeatures:
     median_deposit: float
     largest_deposit: float
     returned_payment_count: int
+    average_daily_balance: float
+    negative_days: int
+    balance_observed_days: int
     mca_position_count: int
     monthly_mca_debt_service: float
     mca_burden_pct: float
@@ -36,6 +39,9 @@ def calculate_underwriting_features(
     monthly_true_revenue: dict[str, float],
     baseline_months: Iterable[str],
     average_monthly_true_revenue: float,
+    average_daily_balance: float = 0.0,
+    negative_days: int = 0,
+    balance_observed_days: int = 0,
     mca_position_count: int,
     monthly_mca_debt_service: float,
 ) -> UnderwritingFeatures:
@@ -158,6 +164,9 @@ def calculate_underwriting_features(
             2,
         ),
         returned_payment_count=returned_payment_count,
+        average_daily_balance=round(float(average_daily_balance), 2),
+        negative_days=int(negative_days),
+        balance_observed_days=int(balance_observed_days),
         mca_position_count=int(mca_position_count),
         monthly_mca_debt_service=round(
             monthly_mca_debt_service,
