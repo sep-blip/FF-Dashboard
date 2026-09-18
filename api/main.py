@@ -14,6 +14,7 @@ from engine_v2.pipeline import UnderwritingPipelineResult, analyze_statement_fil
 from .schemas import (
     ClassifiedTransactionResponse,
     DebtRatioResponse,
+    DecisionReadinessResponse,
     FundingCapacityRequest,
     FundingCapacityResponse,
     HealthResponse,
@@ -185,6 +186,22 @@ def _analysis_response(
             individual_ratios_pct=result.debt_ratios.individual_ratios_pct,
         )
 
+    readiness = None
+    if result.decision_readiness:
+        readiness = DecisionReadinessResponse(
+            status=result.decision_readiness.status.value,
+            automated_offer_allowed=(
+                result.decision_readiness.automated_offer_allowed
+            ),
+            blocking_reasons=list(
+                result.decision_readiness.blocking_reasons
+            ),
+            review_reasons=list(
+                result.decision_readiness.review_reasons
+            ),
+            checks=result.decision_readiness.checks,
+        )
+
     return StatementAnalysisResponse(
         statements=statements,
         transactions=transactions,
@@ -192,6 +209,7 @@ def _analysis_response(
         monthly_true_revenue=result.monthly_true_revenue,
         revenue_baseline=baseline,
         debt_ratios=debt_ratios,
+        decision_readiness=readiness,
         skipped_duplicates=result.skipped_duplicates,
         warnings=result.warnings,
     )
