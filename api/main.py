@@ -89,6 +89,20 @@ def _analysis_response(
                 statement_id=statement.statement_id,
                 source_file=statement.source_file,
                 page_count=statement.page_count,
+                bank_id=statement.bank_id,
+                bank_name=statement.bank_name,
+                extraction_quality_score=(
+                    statement.extraction_quality.score
+                    if statement.extraction_quality else None
+                ),
+                extraction_quality_status=(
+                    statement.extraction_quality.status
+                    if statement.extraction_quality else None
+                ),
+                extraction_mode=(
+                    statement.extraction_quality.extraction_mode
+                    if statement.extraction_quality else None
+                ),
                 period_start=(
                     statement.period_start.isoformat()
                     if statement.period_start
