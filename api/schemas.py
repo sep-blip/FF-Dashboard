@@ -115,6 +115,9 @@ class UnderwritingFeaturesResponse(BaseModel):
     median_deposit: float
     largest_deposit: float
     returned_payment_count: int
+    average_daily_balance: float
+    negative_days: int
+    balance_observed_days: int
     mca_position_count: int
     monthly_mca_debt_service: float
     mca_burden_pct: float
