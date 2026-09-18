@@ -39,6 +39,11 @@ CREATE TABLE IF NOT EXISTS statements (
     statement_id TEXT NOT NULL,
     document_id UUID NOT NULL REFERENCES documents(document_id) ON DELETE CASCADE,
     account_fingerprint TEXT,
+    bank_id TEXT,
+    bank_name TEXT,
+    extraction_quality_score INTEGER,
+    extraction_quality_status TEXT,
+    extraction_mode TEXT,
     period_start DATE,
     period_end DATE,
     coverage_status TEXT NOT NULL DEFAULT 'UNKNOWN',
@@ -54,6 +59,10 @@ CREATE TABLE IF NOT EXISTS statements (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (document_id, statement_id),
     CHECK (coverage_pct IS NULL OR (coverage_pct >= 0 AND coverage_pct <= 100)),
+    CHECK (
+        extraction_quality_score IS NULL
+        OR (extraction_quality_score >= 0 AND extraction_quality_score <= 100)
+    ),
     CHECK (integrity_score IS NULL OR (integrity_score >= 0 AND integrity_score <= 100))
 );
 
