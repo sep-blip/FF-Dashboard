@@ -166,6 +166,7 @@ class StatementAnalysisResponse(BaseModel):
 class ReviewedTransactionRequest(BaseModel):
     transaction_id: str
     date: str
+    description: str
     amount: float = Field(ge=0)
     direction: str
     category: str
@@ -199,6 +200,7 @@ class ReviewRecalculationResponse(BaseModel):
     monthly_true_revenue: dict[str, float]
     revenue_baseline: RevenueBaselineResponse
     debt_ratios: DebtRatioResponse
+    features: UnderwritingFeaturesResponse
     remaining_review_count: int
     override_audit: list[OverrideAuditResponse]
     readiness_status: str
