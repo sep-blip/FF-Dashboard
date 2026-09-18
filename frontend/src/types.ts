@@ -62,6 +62,35 @@ export type DebtRatios = {
   individual_ratios_pct: Record<string, number>;
 };
 
+export type UnderwritingFeatures = {
+  gross_deposits: number;
+  average_monthly_true_revenue: number;
+  revenue_trend_pct: number;
+  revenue_volatility_pct: number;
+  average_deposit_count: number;
+  revenue_concentration_pct: number;
+  median_deposit: number;
+  largest_deposit: number;
+  returned_payment_count: number;
+  mca_position_count: number;
+  monthly_mca_debt_service: number;
+  mca_burden_pct: number;
+  revenue_coverage_ratio: number;
+};
+
+export type ScorecardResult = {
+  policy_version: string;
+  score: number;
+  max_score: number;
+  grade: string;
+  risk_tier: string;
+  revenue_advance_multiple: number;
+  max_total_debt_burden_pct: number;
+  hard_stop: boolean;
+  hard_stop_reasons: string[];
+  breakdown: Record<string, number>;
+};
+
 export type DecisionReadiness = {
   status: string;
   automated_offer_allowed: boolean;
@@ -142,6 +171,7 @@ export type StatementAnalysis = {
   monthly_true_revenue: Record<string, number>;
   revenue_baseline: RevenueBaseline | null;
   debt_ratios: DebtRatios | null;
+  features: UnderwritingFeatures | null;
   decision_readiness: DecisionReadiness | null;
   audit_manifest: AuditManifest | null;
   skipped_duplicates: string[];
