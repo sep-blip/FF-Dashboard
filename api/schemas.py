@@ -113,6 +113,25 @@ class DecisionReadinessResponse(BaseModel):
     checks: dict[str, str] = Field(default_factory=dict)
 
 
+class SourceDocumentAuditResponse(BaseModel):
+    source_file: str
+    sha256: str
+    statement_id: str
+    bank_id: str | None = None
+    page_count: int
+
+
+class AuditManifestResponse(BaseModel):
+    run_id: str
+    generated_at: str
+    engine_version: str
+    classifier_model: str
+    vision_model: str
+    enable_ocr: bool
+    enable_vision_fallback: bool
+    source_documents: list[SourceDocumentAuditResponse]
+
+
 class StatementAnalysisResponse(BaseModel):
     statements: list[StatementSummaryResponse]
     transactions: list[ClassifiedTransactionResponse]
@@ -121,6 +140,7 @@ class StatementAnalysisResponse(BaseModel):
     revenue_baseline: RevenueBaselineResponse | None = None
     debt_ratios: DebtRatioResponse | None = None
     decision_readiness: DecisionReadinessResponse | None = None
+    audit_manifest: AuditManifestResponse | None = None
     skipped_duplicates: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
 
