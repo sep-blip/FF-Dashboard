@@ -188,6 +188,9 @@ class ReviewRecalculationRequest(BaseModel):
     coverage_status_by_month: dict[str, str] = Field(default_factory=dict)
     monthly_debt_service_by_lender: dict[str, float] = Field(default_factory=dict)
     readiness_checks: dict[str, str] = Field(default_factory=dict)
+    average_daily_balance: float = Field(default=0, ge=0)
+    negative_days: int = Field(default=0, ge=0)
+    balance_observed_days: int = Field(default=0, ge=0)
 
 
 class OverrideAuditResponse(BaseModel):
