@@ -96,10 +96,15 @@ def analyze_statement_files(
     ai_client: Any | None = None,
     classifier_model: str = "gpt-5.6-terra",
     enable_ocr: bool = False,
+    enable_vision_fallback: bool = False,
+    vision_model: str = "gpt-5.6-terra",
 ) -> UnderwritingPipelineResult:
     batch: BatchIngestionResult = parse_statement_batch(
         files,
         enable_ocr=enable_ocr,
+        vision_client=ai_client,
+        enable_vision_fallback=enable_vision_fallback,
+        vision_model=vision_model,
     )
 
     result = UnderwritingPipelineResult(
