@@ -399,3 +399,62 @@ tr:last-child td {
     grid-template-columns: 1fr;
   }
 }
+
+.good-alert {
+  border: 1px solid #24553a;
+  background: #10231a;
+  color: #9be3be;
+  margin: 12px 0;
+}
+
+.review-cell {
+  min-width: 320px;
+}
+
+.review-cell select,
+.review-cell input {
+  display: block;
+  width: 100%;
+  margin-bottom: 7px;
+  min-height: 36px;
+  padding: 7px 9px;
+  border: 1px solid #2d394c;
+  border-radius: 7px;
+  background: #0b1018;
+  color: #edf2fa;
+}
+
+.audit-footer {
+  margin-top: 18px;
+}
+
+.audit-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.audit-grid span {
+  display: grid;
+  gap: 5px;
+  color: #8f9aac;
+  font-size: 12px;
+}
+
+.audit-grid strong {
+  color: #dce5f1;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 900px) {
+  .audit-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  .audit-grid {
+    grid-template-columns: 1fr;
+  }
+}
