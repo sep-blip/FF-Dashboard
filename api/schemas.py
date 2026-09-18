@@ -47,3 +47,65 @@ class RevenueBaselineResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     service: str
+
+
+class StatementSummaryResponse(BaseModel):
+    statement_id: str
+    source_file: str
+    page_count: int
+    period_start: str | None = None
+    period_end: str | None = None
+    coverage_status: str
+    coverage_pct: float | None = None
+    integrity_score: int | None = None
+    integrity_status: str | None = None
+    reconciliation_status: str | None = None
+    reconciliation_variance: str | None = None
+    transaction_count: int
+    credit_anchor: str | None = None
+    credit_anchor_method: str | None = None
+
+
+class ClassifiedTransactionResponse(BaseModel):
+    transaction_id: str
+    statement_id: str
+    source_file: str
+    source_page: int | None = None
+    date: str
+    description: str
+    amount: float
+    direction: str
+    category: str
+    classification_source: str
+    classification_reason: str
+    classification_model: str | None = None
+    needs_review: bool
+
+
+class McaPositionResponse(BaseModel):
+    lender: str
+    tier: str
+    payment_amount: float
+    frequency: str
+    monthly_payment: float
+    observed_payments: int
+    first_observed_date: str
+    last_observed_date: str
+
+
+class DebtRatioResponse(BaseModel):
+    average_monthly_true_revenue: float
+    total_monthly_debt_service: float
+    total_debt_ratio_pct: float
+    individual_ratios_pct: dict[str, float]
+
+
+class StatementAnalysisResponse(BaseModel):
+    statements: list[StatementSummaryResponse]
+    transactions: list[ClassifiedTransactionResponse]
+    mca_positions: list[McaPositionResponse]
+    monthly_true_revenue: dict[str, float]
+    revenue_baseline: RevenueBaselineResponse | None = None
+    debt_ratios: DebtRatioResponse | None = None
+    skipped_duplicates: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
