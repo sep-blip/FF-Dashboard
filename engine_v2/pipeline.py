@@ -11,6 +11,7 @@ from .constants import REVIEW_REQUIRED
 from .mca import McaPosition, aggregate_positions
 from .metrics import DebtRatioMetrics, RevenueBaseline, calculate_debt_ratios, select_revenue_baseline
 from .models import TransactionDirection
+from .readiness import DecisionReadiness, assess_decision_readiness
 from .statement_parser import ParsedStatement
 
 
@@ -43,6 +44,7 @@ class UnderwritingPipelineResult:
     monthly_true_revenue: dict[str, float] = field(default_factory=dict)
     revenue_baseline: RevenueBaseline | None = None
     debt_ratios: DebtRatioMetrics | None = None
+    decision_readiness: DecisionReadiness | None = None
     skipped_duplicates: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
@@ -256,6 +258,12 @@ def analyze_statement_files(
             else 0.0
         ),
         monthly_debt_service_by_lender=monthly_debt,
+    )
+
+    result.decision_readiness = assess_decision_readiness(
+        statements=result.statements,
+        transactions=result.transactions,
+        revenue_baseline=result.revenue_baseline,
     )
 
     return result
