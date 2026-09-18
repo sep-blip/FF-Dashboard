@@ -87,6 +87,22 @@ export default function App() {
     [analysis],
   );
 
+  function downloadAnalysis() {
+    if (!analysis) return;
+    const blob = new Blob(
+      [JSON.stringify(analysis, null, 2)],
+      { type: "application/json" },
+    );
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `underwriting-analysis-${new Date()
+      .toISOString()
+      .slice(0, 10)}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }
+
   async function runAnalysis() {
     if (!files.length) return;
     setWorking(true);
@@ -178,6 +194,43 @@ export default function App() {
 
       {analysis && (
         <>
+          {analysis.decision_readiness && (
+            <section
+              className={`panel readiness-card ${analysis.decision_readiness.status.toLowerCase()}`}
+            >
+              <div className="readiness-header">
+                <div>
+                  <p className="eyebrow">Decision readiness</p>
+                  <h2>{analysis.decision_readiness.status.replaceAll("_", " ")}</h2>
+                </div>
+                <StatusPill value={analysis.decision_readiness.status} />
+              </div>
+
+              {analysis.decision_readiness.blocking_reasons.map((reason) => (
+                <div className="alert risk-alert" key={reason}>
+                  {reason}
+                </div>
+              ))}
+              {analysis.decision_readiness.review_reasons.map((reason) => (
+                <div className="alert warning-alert" key={reason}>
+                  {reason}
+                </div>
+              ))}
+
+              <div className="readiness-actions">
+                <small>
+                  Automated offer:{" "}
+                  {analysis.decision_readiness.automated_offer_allowed
+                    ? "allowed"
+                    : "not allowed until controls are cleared"}
+                </small>
+                <button className="secondary-button" onClick={downloadAnalysis}>
+                  Download analysis JSON
+                </button>
+              </div>
+            </section>
+          )}
+
           {analysis.warnings.length > 0 && (
             <section className="panel">
               <h2>Review warnings</h2>
@@ -235,7 +288,8 @@ export default function App() {
               <table>
                 <thead>
                   <tr>
-                    <th>File</th>
+                    <th>File / Bank</th>
+                    <th>Extraction</th>
                     <th>Period</th>
                     <th>Coverage</th>
                     <th>Integrity</th>
@@ -246,7 +300,17 @@ export default function App() {
                 <tbody>
                   {analysis.statements.map((statement) => (
                     <tr key={statement.statement_id}>
-                      <td>{statement.source_file}</td>
+                      <td>
+                        <strong>{statement.source_file}</strong>
+                        <small>{statement.bank_name || "Bank not identified"}</small>
+                      </td>
+                      <td>
+                        <StatusPill value={statement.extraction_quality_status} />
+                        <small>
+                          {statement.extraction_quality_score ?? "—"}/100 ·{" "}
+                          {statement.extraction_mode || "unknown mode"}
+                        </small>
+                      </td>
                       <td>
                         {statement.period_start || "?"} →{" "}
                         {statement.period_end || "?"}
