@@ -3,6 +3,7 @@ import {
   analyzeCreditReport,
   analyzeStatements,
   calculateFundingCapacity,
+  calculateScorecard,
   recalculateReviewedTransactions,
 } from "./api";
 import type {
@@ -10,6 +11,7 @@ import type {
   CreditProfile,
   FundingCapacity,
   ReviewRecalculation,
+  ScorecardResult,
   StatementAnalysis,
 } from "./types";
 
@@ -191,6 +193,25 @@ export default function App() {
   const [reviewWorking, setReviewWorking] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
 
+  const [scorecardError, setScorecardError] = useState<string | null>(null);
+  const [scorecardWorking, setScorecardWorking] = useState(false);
+  const [scorecardResult, setScorecardResult] =
+    useState<ScorecardResult | null>(null);
+  const [averageDailyBalance, setAverageDailyBalance] = useState(0);
+  const [negativeDays, setNegativeDays] = useState(0);
+  const [timeInBusinessMonths, setTimeInBusinessMonths] = useState(24);
+  const [industryScore, setIndustryScore] = useState(5);
+  const [seasonalityScore, setSeasonalityScore] = useState(3);
+  const [creditScoreInput, setCreditScoreInput] = useState(650);
+  const [publicRecords, setPublicRecords] = useState("Clean");
+  const [borrowingVelocity, setBorrowingVelocity] =
+    useState("0 in 90 Days");
+  const [bankVerification, setBankVerification] =
+    useState("Original PDF");
+  const [suspectedFraud, setSuspectedFraud] = useState(false);
+  const [severeWash, setSevereWash] = useState(false);
+  const [activeLenderDefault, setActiveLenderDefault] = useState(false);
+
   const [fundingError, setFundingError] = useState<string | null>(null);
   const [fundingResult, setFundingResult] =
     useState<FundingCapacity | null>(null);
@@ -219,6 +240,8 @@ export default function App() {
     reviewResult?.revenue_baseline || analysis?.revenue_baseline || null;
   const effectiveDebtRatios =
     reviewResult?.debt_ratios || analysis?.debt_ratios || null;
+  const effectiveFeatures =
+    reviewResult?.features || analysis?.features || null;
 
   const reviewCount = useMemo(() => {
     if (reviewResult) return reviewResult.remaining_review_count;
@@ -254,6 +277,7 @@ export default function App() {
       credit_profile: creditProfile,
       manual_review: reviewResult,
       pending_overrides: reviewOverrides,
+      scorecard: scorecardResult,
       funding_scenario: fundingResult,
     };
     const blob = new Blob(
@@ -275,11 +299,23 @@ export default function App() {
     setCreditWorking(true);
     setCreditError(null);
     try {
-      setCreditProfile(
-        await analyzeCreditReport(creditFile, {
-          enableOcr: true,
-        }),
-      );
+      const profile = await analyzeCreditReport(creditFile, {
+        enableOcr: true,
+      });
+      setCreditProfile(profile);
+      if (profile.fico_score != null) {
+        setCreditScoreInput(profile.fico_score);
+      }
+      if (profile.bankruptcies_found === true) {
+        setPublicRecords("Severe");
+      } else if ((profile.active_collections_count || 0) > 0) {
+        setPublicRecords("Moderate");
+      } else if (
+        profile.bankruptcies_found === false &&
+        profile.active_collections_count === 0
+      ) {
+        setPublicRecords("Clean");
+      }
     } catch (err) {
       setCreditError(
         err instanceof Error
@@ -298,6 +334,8 @@ export default function App() {
     setReviewOverrides({});
     setReviewResult(null);
     setReviewError(null);
+    setScorecardResult(null);
+    setScorecardError(null);
     setFundingResult(null);
     setFundingError(null);
 
@@ -385,6 +423,53 @@ export default function App() {
       );
     } finally {
       setReviewWorking(false);
+    }
+  }
+
+  async function runScorecard() {
+    if (!effectiveFeatures) return;
+    setScorecardWorking(true);
+    setScorecardError(null);
+    setFundingResult(null);
+
+    try {
+      const result = await calculateScorecard({
+        averageMonthlyTrueRevenue:
+          effectiveFeatures.average_monthly_true_revenue,
+        revenueTrendPct: effectiveFeatures.revenue_trend_pct,
+        averageDepositCount: effectiveFeatures.average_deposit_count,
+        revenueVolatilityPct:
+          effectiveFeatures.revenue_volatility_pct,
+        averageDailyBalance,
+        mcaPositionCount: effectiveFeatures.mca_position_count,
+        mcaBurdenPct: effectiveFeatures.mca_burden_pct,
+        borrowingVelocity,
+        returnedAchOrMissedPayments:
+          effectiveFeatures.returned_payment_count,
+        negativeDays,
+        timeInBusinessMonths,
+        industryScore,
+        seasonalityScore,
+        creditScore: creditScoreInput,
+        publicRecords,
+        bankVerification,
+        revenueConcentrationPct:
+          effectiveFeatures.revenue_concentration_pct,
+        suspectedFraud,
+        severeWashTransactions: severeWash,
+        activeLenderDefault,
+      });
+      setScorecardResult(result);
+      setRevenueMultiple(result.revenue_advance_multiple);
+      setMaxDebtBurdenPct(result.max_total_debt_burden_pct);
+    } catch (err) {
+      setScorecardError(
+        err instanceof Error
+          ? err.message
+          : "Scorecard calculation failed.",
+      );
+    } finally {
+      setScorecardWorking(false);
     }
   }
 
