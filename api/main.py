@@ -93,13 +93,13 @@ def _analysis_response(
                     else None
                 ),
                 integrity_score=(
-                    statement.integrity.score
-                    if statement.integrity
+                    (statement.composite_integrity or statement.integrity).score
+                    if (statement.composite_integrity or statement.integrity)
                     else None
                 ),
                 integrity_status=(
-                    statement.integrity.status
-                    if statement.integrity
+                    (statement.composite_integrity or statement.integrity).status
+                    if (statement.composite_integrity or statement.integrity)
                     else None
                 ),
                 reconciliation_status=statement.reconciliation_status,
