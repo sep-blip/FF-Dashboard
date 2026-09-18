@@ -1,33 +1,23 @@
 from __future__ import annotations
 
-import hashlib
 import os
 from dataclasses import asdict
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAI
 
-from database.repository import (
-    DatabaseConfigurationError,
-    UnderwritingRepository,
-    connect_database,
-)
 from engine_v2.funding import FundingPolicy, calculate_funding_capacity
 from engine_v2.metrics import select_revenue_baseline
 from engine_v2.pipeline import UnderwritingPipelineResult, analyze_statement_files
-from storage.backends import storage_from_env
 
 from .schemas import (
-    ApplicationCreateRequest,
-    ApplicationCreateResponse,
     ClassifiedTransactionResponse,
     DebtRatioResponse,
     FundingCapacityRequest,
     FundingCapacityResponse,
     HealthResponse,
     McaPositionResponse,
-    PersistedStatementAnalysisResponse,
     RevenueBaselineRequest,
     RevenueBaselineResponse,
     StatementAnalysisResponse,
@@ -37,11 +27,11 @@ from .schemas import (
 
 app = FastAPI(
     title="Forward Funding Underwriting API",
-    version="0.3.0",
+    version="0.4.0",
     description=(
-        "Underwriting services for statement ingestion, deterministic financial "
-        "calculations, transaction classification, funding analysis, and "
-        "persistent application workflows."
+        "Stateless underwriting services for statement ingestion, deterministic "
+        "financial calculations, transaction classification, integrity controls, "
+        "and funding analysis."
     ),
 )
 
@@ -57,7 +47,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -231,34 +221,6 @@ def health() -> HealthResponse:
 
 
 @app.post(
-    "/v1/applications",
-    response_model=ApplicationCreateResponse,
-)
-def create_application(
-    payload: ApplicationCreateRequest,
-) -> ApplicationCreateResponse:
-    try:
-        with connect_database() as connection:
-            repository = UnderwritingRepository(connection)
-            merchant_id, application_id = repository.create_application(
-                legal_name=payload.legal_name,
-                dba_name=payload.dba_name,
-                industry_code=payload.industry_code,
-                requested_amount=payload.requested_amount,
-                requested_term_business_days=(
-                    payload.requested_term_business_days
-                ),
-            )
-    except DatabaseConfigurationError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-    return ApplicationCreateResponse(
-        merchant_id=str(merchant_id),
-        application_id=str(application_id),
-    )
-
-
-@app.post(
     "/v1/underwriting/revenue-baseline",
     response_model=RevenueBaselineResponse,
 )
@@ -299,7 +261,6 @@ async def analyze_bank_statements(
     enable_ocr: bool = Form(False),
     use_ai_classifier: bool = Form(True),
 ) -> StatementAnalysisResponse:
-    """Analyze statements without requiring database or object storage."""
     payloads = await _read_uploads(files)
     result = _run_statement_analysis(
         payloads,
@@ -307,57 +268,3 @@ async def analyze_bank_statements(
         use_ai_classifier=use_ai_classifier,
     )
     return _analysis_response(result)
-
-
-@app.post(
-    "/v1/applications/{application_id}/bank-statements/analyze-and-save",
-    response_model=PersistedStatementAnalysisResponse,
-)
-async def analyze_and_save_bank_statements(
-    application_id: str,
-    files: list[UploadFile] = File(...),
-    enable_ocr: bool = Form(False),
-    use_ai_classifier: bool = Form(True),
-) -> PersistedStatementAnalysisResponse:
-    """Durably store, analyze, and persist a batch of bank statements."""
-
-    payloads = await _read_uploads(files)
-    result = _run_statement_analysis(
-        payloads,
-        enable_ocr=enable_ocr,
-        use_ai_classifier=use_ai_classifier,
-    )
-
-    storage = storage_from_env()
-    storage_uri_by_sha256: dict[str, str] = {}
-    for filename, payload in payloads:
-        sha = hashlib.sha256(payload).hexdigest()
-        stored = storage.put_bytes(
-            key=(
-                f"applications/{application_id}/bank-statements/"
-                f"{sha}.pdf"
-            ),
-            payload=payload,
-            content_type="application/pdf",
-        )
-        storage_uri_by_sha256[sha] = stored.uri
-
-    try:
-        with connect_database() as connection:
-            repository = UnderwritingRepository(connection)
-            repository.persist_statement_analysis(
-                application_id=application_id,
-                result=result,
-                storage_uri_by_sha256=storage_uri_by_sha256,
-            )
-    except DatabaseConfigurationError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    response = _analysis_response(result)
-    return PersistedStatementAnalysisResponse(
-        **response.model_dump(),
-        application_id=application_id,
-        persisted=True,
-    )
