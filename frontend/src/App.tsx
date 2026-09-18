@@ -1,11 +1,13 @@
 import { useMemo, useState } from "react";
 import {
+  analyzeCreditReport,
   analyzeStatements,
   calculateFundingCapacity,
   recalculateReviewedTransactions,
 } from "./api";
 import type {
   ClassifiedTransaction,
+  CreditProfile,
   FundingCapacity,
   ReviewRecalculation,
   StatementAnalysis,
@@ -170,6 +172,10 @@ function TransactionTable({
 
 export default function App() {
   const [files, setFiles] = useState<File[]>([]);
+  const [creditFile, setCreditFile] = useState<File | null>(null);
+  const [creditProfile, setCreditProfile] = useState<CreditProfile | null>(null);
+  const [creditWorking, setCreditWorking] = useState(false);
+  const [creditError, setCreditError] = useState<string | null>(null);
   const [enableOcr, setEnableOcr] = useState(false);
   const [enableVision, setEnableVision] = useState(true);
   const [useAi, setUseAi] = useState(true);
@@ -245,6 +251,7 @@ export default function App() {
     if (!analysis) return;
     const exportPayload = {
       ...analysis,
+      credit_profile: creditProfile,
       manual_review: reviewResult,
       pending_overrides: reviewOverrides,
       funding_scenario: fundingResult,
@@ -261,6 +268,27 @@ export default function App() {
       .slice(0, 10)}.json`;
     anchor.click();
     URL.revokeObjectURL(url);
+  }
+
+  async function runCreditAnalysis() {
+    if (!creditFile) return;
+    setCreditWorking(true);
+    setCreditError(null);
+    try {
+      setCreditProfile(
+        await analyzeCreditReport(creditFile, {
+          enableOcr: true,
+        }),
+      );
+    } catch (err) {
+      setCreditError(
+        err instanceof Error
+          ? err.message
+          : "Credit-report analysis failed.",
+      );
+    } finally {
+      setCreditWorking(false);
+    }
   }
 
   async function runAnalysis() {
@@ -414,25 +442,46 @@ export default function App() {
           </p>
         </div>
 
-        <label className="dropzone">
-          <input
-            type="file"
-            accept="application/pdf"
-            multiple
-            onChange={(event) =>
-              setFiles(Array.from(event.target.files || []))
-            }
-          />
-          <strong>
-            {files.length
-              ? `${files.length} statement file(s) selected`
-              : "Choose PDF bank statements"}
-          </strong>
-          <span>
-            {files.map((file) => file.name).join(" • ") ||
-              "Native positioned PDF extraction is attempted first."}
-          </span>
-        </label>
+        <div className="upload-grid">
+          <label className="dropzone">
+            <input
+              type="file"
+              accept="application/pdf"
+              multiple
+              onChange={(event) =>
+                setFiles(Array.from(event.target.files || []))
+              }
+            />
+            <strong>
+              {files.length
+                ? `${files.length} statement file(s) selected`
+                : "Choose PDF bank statements"}
+            </strong>
+            <span>
+              {files.map((file) => file.name).join(" • ") ||
+                "Native positioned PDF extraction is attempted first."}
+            </span>
+          </label>
+
+          <label className="dropzone">
+            <input
+              type="file"
+              accept="application/pdf"
+              onChange={(event) =>
+                setCreditFile(event.target.files?.[0] || null)
+              }
+            />
+            <strong>
+              {creditFile
+                ? creditFile.name
+                : "Choose credit report PDF"}
+            </strong>
+            <span>
+              Structured bureau extraction fails closed when a field is not
+              explicitly supported by the report.
+            </span>
+          </label>
+        </div>
 
         <div className="controls">
           <label>
@@ -460,6 +509,13 @@ export default function App() {
             Vision fallback for unreadable pages
           </label>
           <button
+            className="secondary-button"
+            disabled={!creditFile || creditWorking}
+            onClick={runCreditAnalysis}
+          >
+            {creditWorking ? "Reading credit…" : "Analyze credit report"}
+          </button>
+          <button
             disabled={!files.length || working}
             onClick={runAnalysis}
           >
@@ -467,6 +523,9 @@ export default function App() {
           </button>
         </div>
 
+        {creditError && (
+          <div className="alert risk-alert">{creditError}</div>
+        )}
         {error && <div className="alert risk-alert">{error}</div>}
       </section>
 
@@ -527,6 +586,100 @@ export default function App() {
               </button>
             </div>
           </section>
+
+          {creditProfile && (
+            <section className="panel">
+              <div className="section-heading-row">
+                <div>
+                  <p className="eyebrow">Bureau data</p>
+                  <h2>{creditProfile.owner_name || "Credit profile"}</h2>
+                  <p className="subtle">
+                    {creditProfile.source_file} ·{" "}
+                    {creditProfile.model_name || "structured extraction"}
+                  </p>
+                </div>
+                <StatusPill
+                  value={
+                    creditProfile.warnings.length
+                      ? "REVIEW"
+                      : "EXTRACTED"
+                  }
+                />
+              </div>
+
+              {creditProfile.warnings.map((warning) => (
+                <div className="alert warning-alert" key={warning}>
+                  {warning}
+                </div>
+              ))}
+
+              <div className="kpis credit-kpis">
+                <article className="kpi">
+                  <span>FICO / Beacon</span>
+                  <strong>
+                    {creditProfile.fico_score ?? "Not found"}
+                  </strong>
+                  <small>Explicit report value only</small>
+                </article>
+                <article className="kpi">
+                  <span>Revolving utilization</span>
+                  <strong>
+                    {creditProfile.revolving_credit_utilization_pct != null
+                      ? `${creditProfile.revolving_credit_utilization_pct.toFixed(1)}%`
+                      : "Not found"}
+                  </strong>
+                  <small>Not inferred from balances</small>
+                </article>
+                <article className="kpi">
+                  <span>Active collections</span>
+                  <strong>
+                    {creditProfile.active_collections_count ?? "Not found"}
+                  </strong>
+                  <small>
+                    {creditProfile.total_collections_amount != null
+                      ? money.format(
+                          creditProfile.total_collections_amount,
+                        )
+                      : "Amount not found"}
+                  </small>
+                </article>
+                <article className="kpi">
+                  <span>Reported high credit</span>
+                  <strong>
+                    {creditProfile.total_high_credit != null
+                      ? money.format(creditProfile.total_high_credit)
+                      : "Not found"}
+                  </strong>
+                  <small>Explicit report field</small>
+                </article>
+              </div>
+
+              <div className="credit-detail-grid">
+                <span>
+                  Bankruptcy / proposal
+                  <strong>
+                    {creditProfile.bankruptcies_found == null
+                      ? "Not established"
+                      : creditProfile.bankruptcies_found
+                        ? "Found"
+                        : "Not found"}
+                  </strong>
+                </span>
+                <span>
+                  Mortgage trades
+                  <strong>
+                    {creditProfile.number_of_mortgages ?? "Not found"}
+                  </strong>
+                </span>
+                <span>
+                  Mortgage / LTV
+                  <strong>
+                    {creditProfile.mortgage_ltv_details || "Not found"}
+                  </strong>
+                </span>
+              </div>
+            </section>
+          )}
 
           {analysis.warnings.length > 0 && (
             <section className="panel">
