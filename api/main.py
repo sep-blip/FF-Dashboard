@@ -12,6 +12,7 @@ from engine_v2.metrics import select_revenue_baseline
 from engine_v2.pipeline import UnderwritingPipelineResult, analyze_statement_files
 
 from .schemas import (
+    AuditManifestResponse,
     ClassifiedTransactionResponse,
     DebtRatioResponse,
     DecisionReadinessResponse,
@@ -21,6 +22,7 @@ from .schemas import (
     McaPositionResponse,
     RevenueBaselineRequest,
     RevenueBaselineResponse,
+    SourceDocumentAuditResponse,
     StatementAnalysisResponse,
     StatementSummaryResponse,
 )
@@ -202,6 +204,30 @@ def _analysis_response(
             checks=result.decision_readiness.checks,
         )
 
+    audit_manifest = None
+    if result.audit_manifest:
+        audit_manifest = AuditManifestResponse(
+            run_id=result.audit_manifest.run_id,
+            generated_at=result.audit_manifest.generated_at.isoformat(),
+            engine_version=result.audit_manifest.engine_version,
+            classifier_model=result.audit_manifest.classifier_model,
+            vision_model=result.audit_manifest.vision_model,
+            enable_ocr=result.audit_manifest.enable_ocr,
+            enable_vision_fallback=(
+                result.audit_manifest.enable_vision_fallback
+            ),
+            source_documents=[
+                SourceDocumentAuditResponse(
+                    source_file=document.source_file,
+                    sha256=document.sha256,
+                    statement_id=document.statement_id,
+                    bank_id=document.bank_id,
+                    page_count=document.page_count,
+                )
+                for document in result.audit_manifest.source_documents
+            ],
+        )
+
     return StatementAnalysisResponse(
         statements=statements,
         transactions=transactions,
@@ -210,6 +236,7 @@ def _analysis_response(
         revenue_baseline=baseline,
         debt_ratios=debt_ratios,
         decision_readiness=readiness,
+        audit_manifest=audit_manifest,
         skipped_duplicates=result.skipped_duplicates,
         warnings=result.warnings,
     )
