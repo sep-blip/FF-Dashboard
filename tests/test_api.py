@@ -86,3 +86,16 @@ def test_statement_analysis_endpoint_skips_duplicate_uploads():
     body = response.json()
     assert len(body["statements"]) == 1
     assert len(body["skipped_duplicates"]) == 1
+
+
+def test_create_application_requires_database_configuration(monkeypatch):
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    response = client.post(
+        "/v1/applications",
+        json={
+            "legal_name": "Example Merchant Inc.",
+            "requested_amount": 50000,
+        },
+    )
+    assert response.status_code == 503
+    assert "DATABASE_URL" in response.json()["detail"]
