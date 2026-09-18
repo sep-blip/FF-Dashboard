@@ -1,4 +1,9 @@
-import type { FundingCapacity, StatementAnalysis } from "./types";
+import type {
+  ClassifiedTransaction,
+  FundingCapacity,
+  ReviewRecalculation,
+  StatementAnalysis,
+} from "./types";
 
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") ||
@@ -80,4 +85,54 @@ export async function calculateFundingCapacity(input: {
   }
 
   return response.json() as Promise<FundingCapacity>;
+}
+
+
+export async function recalculateReviewedTransactions(input: {
+  transactions: ClassifiedTransaction[];
+  overrides: Array<{
+    transactionId: string;
+    category: string;
+    reason: string;
+  }>;
+  coverageStatusByMonth: Record<string, string>;
+  monthlyDebtServiceByLender: Record<string, number>;
+  readinessChecks: Record<string, string>;
+}): Promise<ReviewRecalculation> {
+  const response = await fetch(
+    `${API_BASE_URL}/v1/underwriting/recalculate-reviewed-transactions`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        transactions: input.transactions.map((transaction) => ({
+          transaction_id: transaction.transaction_id,
+          date: transaction.date,
+          amount: transaction.amount,
+          direction: transaction.direction,
+          category: transaction.category,
+          needs_review: transaction.needs_review,
+        })),
+        overrides: input.overrides.map((override) => ({
+          transaction_id: override.transactionId,
+          category: override.category,
+          reason: override.reason || "Underwriter override",
+        })),
+        coverage_status_by_month: input.coverageStatusByMonth,
+        monthly_debt_service_by_lender:
+          input.monthlyDebtServiceByLender,
+        readiness_checks: input.readinessChecks,
+      }),
+    },
+  );
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null);
+    throw new Error(
+      payload?.detail ||
+        `Review recalculation failed with HTTP ${response.status}`,
+    );
+  }
+
+  return response.json() as Promise<ReviewRecalculation>;
 }
