@@ -290,3 +290,47 @@ tr:last-child td {
     grid-template-columns: 1fr;
   }
 }
+
+.readiness-card {
+  display: grid;
+  gap: 10px;
+}
+
+.readiness-card.ready {
+  border-color: #24553a;
+}
+
+.readiness-card.review_required {
+  border-color: #66552c;
+}
+
+.readiness-card.blocked {
+  border-color: #693434;
+}
+
+.readiness-header,
+.readiness-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.readiness-actions {
+  margin-top: 4px;
+}
+
+.secondary-button {
+  margin-left: 0;
+  background: #141b26;
+  border-color: #35445d;
+  color: #d7e0ed;
+}
+
+@media (max-width: 700px) {
+  .readiness-header,
+  .readiness-actions {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
