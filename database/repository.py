@@ -189,6 +189,11 @@ class UnderwritingRepository:
                     INSERT INTO statements (
                         statement_id,
                         document_id,
+                        bank_id,
+                        bank_name,
+                        extraction_quality_score,
+                        extraction_quality_status,
+                        extraction_mode,
                         period_start,
                         period_end,
                         coverage_status,
@@ -203,11 +208,16 @@ class UnderwritingRepository:
                         integrity_status
                     )
                     VALUES (
-                        %s, %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s, %s
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s
                     )
                     ON CONFLICT (document_id, statement_id)
                     DO UPDATE SET
+                        bank_id = EXCLUDED.bank_id,
+                        bank_name = EXCLUDED.bank_name,
+                        extraction_quality_score = EXCLUDED.extraction_quality_score,
+                        extraction_quality_status = EXCLUDED.extraction_quality_status,
+                        extraction_mode = EXCLUDED.extraction_mode,
                         period_start = EXCLUDED.period_start,
                         period_end = EXCLUDED.period_end,
                         coverage_status = EXCLUDED.coverage_status,
@@ -225,6 +235,20 @@ class UnderwritingRepository:
                     (
                         statement.statement_id,
                         document_id,
+                        statement.bank_id,
+                        statement.bank_name,
+                        (
+                            statement.extraction_quality.score
+                            if statement.extraction_quality else None
+                        ),
+                        (
+                            statement.extraction_quality.status
+                            if statement.extraction_quality else None
+                        ),
+                        (
+                            statement.extraction_quality.extraction_mode
+                            if statement.extraction_quality else None
+                        ),
                         statement.period_start,
                         statement.period_end,
                         (
