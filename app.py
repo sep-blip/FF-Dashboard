@@ -15,6 +15,7 @@ from engine_v2.credit_extraction import extract_credit_profile
 from engine_v2.identifiers import stable_statement_id, stable_transaction_id
 from engine_v2.period import extract_statement_period
 from engine_v2.pdf_integrity import analyze_pdf_integrity
+from engine_v2.pipeline import analyze_statement_files
 
 
 st.set_page_config(page_title="Forward Funding - Underwriting Tool", layout="wide")
@@ -281,6 +282,8 @@ if 'statement_coverage' not in st.session_state:
     st.session_state.statement_coverage = []
 if 'pdf_integrity_reports' not in st.session_state:
     st.session_state.pdf_integrity_reports = []
+if 'full_ledger' not in st.session_state:
+    st.session_state.full_ledger = None
 
 
 # ==============================================================================
@@ -662,699 +665,224 @@ with tab1:
     if st.button("🚀 Process Statements", type="primary") and uploaded_files:
         status_text = st.empty()
         progress_bar = st.progress(0)
-
-        all_deposits = []
-        all_mca_debits = []
-        total_anchor_credits = 0.0
-        anchor_source_count = 0
         st.session_state.diagnostic_log = []
 
-        file_hashes_seen = {}
-        skipped_duplicate_files = []
-        statement_ids_by_file = {}
-        coverage_records = []
-        pdf_integrity_records = []
+        status_text.info("Step 1/3: Parsing and validating statements...")
 
-        status_text.info("Step 1/3: Parsing Statements...")
+        upload_payload = []
+        for idx, uploaded in enumerate(uploaded_files):
+            upload_payload.append((uploaded.name, uploaded.getvalue()))
+            progress_bar.progress((idx + 1) / max(len(uploaded_files), 1))
 
-        for f_idx, f in enumerate(uploaded_files):
-            pdf_bytes = f.getvalue()
-
-            file_hash = hashlib.sha256(pdf_bytes).hexdigest()
-            if file_hash in file_hashes_seen:
-                skipped_duplicate_files.append(f.name)
-                st.session_state.diagnostic_log.append(
-                    f"⚠️ {f.name}: SKIPPED - byte-identical duplicate of "
-                    f"{file_hashes_seen[file_hash]}"
-                )
-                progress_bar.progress((f_idx + 1) / len(uploaded_files))
-                continue
-
-            file_hashes_seen[file_hash] = f.name
-            file_statement_id = stable_statement_id(file_sha256=file_hash)
-            statement_ids_by_file[f.name] = file_statement_id
-
-            pdf_integrity = analyze_pdf_integrity(pdf_bytes)
-            pdf_integrity_records.append({
-                "source_file": f.name,
-                "statement_id": file_statement_id,
-                "score": pdf_integrity.score,
-                "status": pdf_integrity.status,
-                "page_count": pdf_integrity.page_count,
-                "findings": [
-                    {
-                        "code": finding.code,
-                        "severity": finding.severity.value,
-                        "message": finding.message,
-                        "evidence": finding.evidence,
-                    }
-                    for finding in pdf_integrity.findings
-                ],
-            })
-            if pdf_integrity.status != "LOW_CONCERN":
-                st.session_state.diagnostic_log.append(
-                    f"⚠️ {f.name}: PDF integrity score {pdf_integrity.score}/100 "
-                    f"({pdf_integrity.status}). Structural review recommended."
-                )
-            for finding in pdf_integrity.findings:
-                st.session_state.diagnostic_log.append(
-                    f"PDF integrity [{finding.severity.value}] {f.name} "
-                    f"{finding.code}: {finding.message}"
-                )
-
-            full_pdf_text, text_errors = safe_pdf_text(pdf_bytes)
-            for err in text_errors:
-                st.session_state.diagnostic_log.append(f"{f.name}: {err}")
-
-            if not full_pdf_text:
-                st.session_state.diagnostic_log.append(
-                    f"🚨 {f.name}: No text could be extracted. "
-                    "The PDF is likely scanned/image-only or damaged."
-                )
-                progress_bar.progress((f_idx + 1) / len(uploaded_files))
-                continue
-
-            period_detection = extract_statement_period(full_pdf_text)
-            if period_detection.period_start and period_detection.period_end:
-                coverage = calculate_statement_coverage(
-                    statement_id=file_statement_id,
-                    period_start=period_detection.period_start,
-                    period_end=period_detection.period_end,
-                    transaction_dates=[],
-                )
-                coverage_month = (
-                    period_detection.period_start.strftime("%Y-%m")
-                    if (
-                        period_detection.period_start.year == period_detection.period_end.year
-                        and period_detection.period_start.month == period_detection.period_end.month
-                    )
-                    else None
-                )
-                coverage_records.append({
-                    "source_file": f.name,
-                    "statement_id": file_statement_id,
-                    "month": coverage_month,
-                    "period_start": str(period_detection.period_start),
-                    "period_end": str(period_detection.period_end),
-                    "expected_days": coverage.expected_days,
-                    "observed_days": coverage.observed_days,
-                    "coverage_pct": coverage.coverage_pct,
-                    "status": coverage.status.value,
-                    "warning": coverage.warning,
-                })
-                if coverage.warning:
-                    st.session_state.diagnostic_log.append(
-                        f"⚠️ {f.name}: {coverage.warning}"
-                    )
-                else:
-                    st.session_state.diagnostic_log.append(
-                        f"✅ {f.name}: Statement period verified as complete "
-                        f"({period_detection.period_start} to {period_detection.period_end})."
-                    )
-            else:
-                coverage_records.append({
-                    "source_file": f.name,
-                    "statement_id": file_statement_id,
-                    "month": None,
-                    "period_start": None,
-                    "period_end": None,
-                    "expected_days": None,
-                    "observed_days": None,
-                    "coverage_pct": None,
-                    "status": "UNKNOWN",
-                    "warning": period_detection.warning,
-                })
-                st.session_state.diagnostic_log.append(
-                    f"⚠️ {f.name}: {period_detection.warning}"
-                )
-
-            doc, open_error = open_pdf_safely(pdf_bytes)
-            if doc is None:
-                st.session_state.diagnostic_log.append(
-                    f"🚨 {f.name}: Could not open PDF for positioned parsing: {open_error}"
-                )
-                progress_bar.progress((f_idx + 1) / len(uploaded_files))
-                continue
-
-            try:
-                is_nbc = "BANQUE NATIONALE" in full_pdf_text.upper()
-
-                bmo_credited_matches = re.findall(
-                    r'Total\s+amounts\s+credited\s*\(\$\)[^\d\n]*\+?\s*([\d,]+\.\d{2})',
-                    full_pdf_text, re.IGNORECASE
-                )
-                bmo_closing_matches = re.findall(
-                    r'Closing\s+totals[\s\S]*?[\d,]+\.\d{2}\s+([\d,]+\.\d{2})',
-                    full_pdf_text, re.IGNORECASE
-                )
-                rbc_matches = re.findall(
-                    r'Total\s+deposits\s*&\s*credits\s*\(\d+\)[^\d]*\+?\s*([\d,]+\.\d{2})',
-                    full_pdf_text, re.IGNORECASE
-                )
-
-                # Removed the old overly broad generic "Total" regex.
-                td_matches = re.findall(
-                    r'(?:Total\s+(?:deposits|credits|amounts\s+deposited)'
-                    r'|Amounts\s+deposited)[^\d\n]*([\d,]+\.\d{2})',
-                    full_pdf_text, re.IGNORECASE
-                )
-
-                file_anchor = 0.0
-                anchor_method = None
-
-                if bmo_credited_matches:
-                    file_anchor = sum(parse_money_token(m) or 0 for m in bmo_credited_matches)
-                    anchor_method = "BMO: Total amounts credited"
-                elif bmo_closing_matches:
-                    file_anchor = sum(parse_money_token(m) or 0 for m in bmo_closing_matches)
-                    anchor_method = "BMO: Closing totals"
-                elif rbc_matches:
-                    file_anchor = sum(parse_money_token(m) or 0 for m in rbc_matches)
-                    anchor_method = "RBC: Total deposits & credits"
-                elif td_matches:
-                    file_anchor = sum(parse_money_token(m) or 0 for m in td_matches)
-                    anchor_method = "TD/generic: Explicit deposit total"
-
-                opening_bal, closing_bal = extract_opening_closing_balance(full_pdf_text)
-                needs_fallback = (
-                    anchor_method is None
-                    and opening_bal is not None
-                    and closing_bal is not None
-                )
-
-                if anchor_method:
-                    total_anchor_credits += file_anchor
-                    anchor_source_count += 1
-                    st.session_state.diagnostic_log.append(
-                        f"✅ {f.name}: Anchor found [{anchor_method}] = ${file_anchor:,.2f}"
-                    )
-                elif needs_fallback:
-                    st.session_state.diagnostic_log.append(
-                        f"↪️ {f.name}: No summary deposit total detected; "
-                        "balance fallback will be resolved after debits are tallied."
-                    )
-                else:
-                    st.session_state.diagnostic_log.append(
-                        f"⚠️ {f.name}: No reliable summary deposit total or "
-                        "opening/closing balance found."
-                    )
-
-                year_match = re.search(r'\b(201[5-9]|202[0-9])\b', full_pdf_text)
-                year = year_match.group(0) if year_match else "2026"
-
-                active_date = None
-                active_month = None
-                file_debit_total = 0.0
-
-                debit_x_min, debit_x_max = 200, 370
-                credit_x_min, credit_x_max = 370, 460
-                desc_x_limit = 200
-                balance_x_min = 460
-
-                for page_num, page in enumerate(doc.pages, 1):
-                    raw_words = extract_words_safely(
-                        page, page_num, st.session_state.diagnostic_log
-                    )
-                    if not raw_words:
-                        continue
-
-                    grouped_lines = group_words_into_lines(raw_words)
-
-                    page_balance_x = None
-                    for _, words in grouped_lines[:20]:
-                        for x0, word in words:
-                            if word.lower().replace(" ", "") in {
-                                "balance", "balance($)", "balance(s)"
-                            }:
-                                page_balance_x = x0 - 10
-                                break
-                        if page_balance_x is not None:
-                            break
-
-                    if page_balance_x is not None:
-                        balance_x_min = page_balance_x
-                        credit_x_max = balance_x_min - 5
-
-                    for yk_idx, (_, sorted_words) in enumerate(grouped_lines):
-                        full_line = " ".join(word for _, word in sorted_words)
-                        full_line_lower = full_line.lower()
-
-                        lookahead_line = ""
-                        if yk_idx + 1 < len(grouped_lines):
-                            lookahead_line = " ".join(
-                                word for _, word in grouped_lines[yk_idx + 1][1]
-                            )
-                        combined_lower = f"{full_line} {lookahead_line}".lower()
-
-                        header_hit = (
-                            any(k in combined_lower for k in [
-                                "withdrawn", "debited", "debit", "payments",
-                                "deposited", "credited", "credit", "deposits"
-                            ])
-                            and
-                            any(k in combined_lower for k in [
-                                "withdrawn", "debited", "debit", "deposited",
-                                "credited", "credit"
-                            ])
-                        )
-
-                        if header_hit:
-                            calibration = detect_statement_columns(
-                                sorted_words, balance_x_min
-                            )
-                            if calibration:
-                                (
-                                    desc_x_limit, debit_x_min, debit_x_max,
-                                    credit_x_min, credit_x_max
-                                ) = calibration
-                                st.session_state.diagnostic_log.append(
-                                    f"{f.name} (p.{page_num}): Calibrated columns -> "
-                                    f"Desc < {desc_x_limit:.1f}, "
-                                    f"Debit {debit_x_min:.1f}-{debit_x_max:.1f}, "
-                                    f"Credit {credit_x_min:.1f}-{credit_x_max:.1f}, "
-                                    f"Balance > {balance_x_min:.1f}"
-                                )
-
-                        if any(k in full_line.upper() for k in [
-                            "ACCOUNT/TRANSACTION TYPE", "FEES PAID",
-                            "NEXT STATEMENT", "MONTHLY AVER",
-                            "DEP CONTENT", "CHQS ENCLOSED"
-                        ]):
-                            continue
-
-                        date_value, month_value = parse_date_from_line(full_line, year)
-                        is_date_row = date_value is not None
-
-                        if is_nbc:
-                            nbc_match = re.match(
-                                r'^[\s|]*(0[1-9]|1[0-2])[\s|]+'
-                                r'(0[1-9]|[12]\d|3[01])\b',
-                                full_line
-                            )
-                            if nbc_match:
-                                m_str, d_str = nbc_match.group(1), nbc_match.group(2)
-                                date_value = f"{year}-{m_str}-{d_str}"
-                                month_value = f"{year}-{m_str}"
-                                is_date_row = True
-
-                        if is_date_row:
-                            active_date = date_value
-                            active_month = month_value
-
-                        has_currency = bool(re.search(r'\d+\.\d{2}', full_line))
-                        if not (is_date_row or (active_date and has_currency)):
-                            continue
-
-                        debit_parts = []
-                        credit_parts = []
-                        desc_words = []
-
-                        if is_nbc and is_date_row:
-                            for x0, word in sorted_words:
-                                if x0 < 90:
-                                    continue
-                                elif x0 < 270:
-                                    if word != "|":
-                                        desc_words.append(word)
-                                elif 270 <= x0 < 375:
-                                    if re.search(r'[\d,]', word):
-                                        debit_parts.append(word)
-                                elif 375 <= x0 < 465:
-                                    if re.search(r'[\d,]', word):
-                                        credit_parts.append(word)
-                        else:
-                            for x0, word in sorted_words:
-                                if x0 >= balance_x_min:
-                                    continue
-                                if (
-                                    x0 < desc_x_limit
-                                    and not re.match(
-                                        r'^(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)$',
-                                        word, re.IGNORECASE
-                                    )
-                                ):
-                                    if not desc_words and re.match(r'^\d{1,2}$', word):
-                                        continue
-                                    desc_words.append(word)
-                                elif debit_x_min <= x0 < debit_x_max:
-                                    if re.search(r'[\d,.\-()]', word):
-                                        debit_parts.append(word)
-                                elif credit_x_min <= x0 < credit_x_max:
-                                    if re.search(r'[\d,.\-()]', word):
-                                        credit_parts.append(word)
-
-                        debit_val = money_from_words(debit_parts)
-                        credit_val = money_from_words(credit_parts)
-
-                        desc_str = " ".join(desc_words).strip()
-                        desc_upper = desc_str.upper()
-
-                        if any(k in desc_upper for k in [
-                            "CLOSING", "OPENING", "ITEMS PROCESSED",
-                            "BALANCE FORWARD", "TOTALS", "SOLDE PRECEDENT",
-                            "FACTURATION", "NEW BALANCE", "TOTAL FUNDS",
-                            "TRANSACTIONS"
-                        ]):
-                            continue
-                        if "TOTAL" in desc_upper and len(desc_words) < 3:
-                            continue
-
-                        if credit_val is not None and credit_val > 0:
-                            all_deposits.append({
-                                "date": active_date,
-                                "month": active_month,
-                                "description": desc_str or "Deposit",
-                                "amount": credit_val,
-                                "payer_or_source": desc_str or "Deposit",
-                                "tx_type": "credit",
-                                "source_file": f.name,
-                                "statement_id": file_statement_id,
-                                "source_page": page_num
-                            })
-
-                        if debit_val is not None and debit_val > 0:
-                            file_debit_total += debit_val
-
-                            is_mca = False
-                            for var_str, (tier, lender_name) in ALL_KNOWN_LENDERS.items():
-                                if (
-                                    re.search(r'\b' + re.escape(var_str) + r'\b', desc_upper)
-                                    and lender_name not in ["TD", "EASYHOME"]
-                                ):
-                                    all_mca_debits.append({
-                                        "date": active_date,
-                                        "lender": lender_name,
-                                        "tier": tier,
-                                        "payment_amount": debit_val,
-                                        "month": active_month,
-                                        "statement_id": file_statement_id,
-                                        "source_file": f.name,
-                                        "source_page": page_num
-                                    })
-                                    is_mca = True
-                                    break
-
-                            if not is_mca and re.search(
-                                r'\bLOAN PAYMENT\b|\bLOAN CREDIT\b', desc_upper
-                            ):
-                                all_mca_debits.append({
-                                    "date": active_date,
-                                    "lender": "Generic Loan/MCA",
-                                    "tier": "Standard",
-                                    "payment_amount": debit_val,
-                                    "month": active_month,
-                                    "statement_id": file_statement_id,
-                                    "source_file": f.name,
-                                    "source_page": page_num
-                                })
-
-                            if matches_any(NSF_REVERSAL_PATTERNS, desc_upper):
-                                if (
-                                    not re.search(r'OVERDRAWN|HANDLING CHGS', desc_upper)
-                                    and debit_val > 30.00
-                                ):
-                                    all_deposits.append({
-                                        "date": active_date,
-                                        "month": active_month,
-                                        "description": desc_str,
-                                        "amount": debit_val,
-                                        "payer_or_source": "Bank Fee",
-                                        "tx_type": "debit",
-                                        "source_file": f.name,
-                                        "statement_id": file_statement_id,
-                                        "source_page": page_num
-                                    })
-
-                if needs_fallback:
-                    implied_credits = (closing_bal - opening_bal) + file_debit_total
-                    if implied_credits >= 0:
-                        total_anchor_credits += implied_credits
-                        anchor_source_count += 1
-                        st.session_state.diagnostic_log.append(
-                            f"↪️ {f.name}: Balance fallback = ${implied_credits:,.2f} "
-                            f"(Closing ${closing_bal:,.2f} - Opening ${opening_bal:,.2f} + "
-                            f"Debits ${file_debit_total:,.2f})"
-                        )
-                    else:
-                        st.session_state.diagnostic_log.append(
-                            f"⚠️ {f.name}: Balance fallback produced a negative "
-                            f"implied deposit total (${implied_credits:,.2f}); anchor was not used."
-                        )
-
-            except Exception as exc:
-                st.session_state.diagnostic_log.append(
-                    f"🚨 {f.name}: Unexpected parsing error was isolated: {exc}"
-                )
-            finally:
-                try:
-                    doc.close()
-                except Exception:
-                    pass
-
-            progress_bar.progress((f_idx + 1) / len(uploaded_files))
-
-        st.session_state.expected_credits = total_anchor_credits
-        st.session_state.statement_coverage = coverage_records
-        st.session_state.pdf_integrity_reports = pdf_integrity_records
-
-        partial_count = sum(1 for row in coverage_records if row["status"] == "PARTIAL")
-        unknown_count = sum(1 for row in coverage_records if row["status"] == "UNKNOWN")
-        if partial_count:
-            st.warning(
-                f"⚠️ {partial_count} partial statement(s) detected. Observed values are retained, "
-                "but partial months are excluded from the underwriting revenue average when "
-                "complete months are available."
-            )
-        if unknown_count:
-            st.info(
-                f"ℹ️ Could not verify the exact statement period for {unknown_count} file(s). "
-                "Those files are processed, but completeness remains UNKNOWN."
-            )
-
-        integrity_review_count = sum(
-            1 for row in pdf_integrity_records
-            if row.get("status") != "LOW_CONCERN"
+        pipeline_result = analyze_statement_files(
+            files=upload_payload,
+            ai_client=client,
+            classifier_model=CLASSIFIER_MODEL,
+            enable_ocr=False,
         )
-        if integrity_review_count:
-            st.warning(
-                f"🛡️ {integrity_review_count} statement file(s) contain structural "
-                "integrity signals that warrant manual review. These signals are not "
-                "proof of fraud; see Extraction Diagnostics for the evidence."
-            )
 
-        if skipped_duplicate_files:
-            st.warning(
-                f"⚠️ Skipped {len(skipped_duplicate_files)} duplicate file(s): "
-                f"{', '.join(skipped_duplicate_files)}"
-            )
+        coverage_records = []
+        integrity_records = []
+        expected_credits = 0.0
+        anchor_count = 0
 
-        if not all_deposits:
+        for statement in pipeline_result.statements:
+            statement_month = None
+            if (
+                statement.period_start
+                and statement.period_end
+                and statement.period_start.year == statement.period_end.year
+                and statement.period_start.month == statement.period_end.month
+            ):
+                statement_month = statement.period_start.strftime("%Y-%m")
+
+            coverage_records.append({
+                "source_file": statement.source_file,
+                "statement_id": statement.statement_id,
+                "month": statement_month,
+                "period_start": (
+                    statement.period_start.isoformat()
+                    if statement.period_start else None
+                ),
+                "period_end": (
+                    statement.period_end.isoformat()
+                    if statement.period_end else None
+                ),
+                "expected_days": (
+                    statement.coverage.expected_days
+                    if statement.coverage else None
+                ),
+                "observed_days": (
+                    statement.coverage.observed_days
+                    if statement.coverage else None
+                ),
+                "coverage_pct": (
+                    statement.coverage.coverage_pct
+                    if statement.coverage else None
+                ),
+                "status": (
+                    statement.coverage.status.value
+                    if statement.coverage else "UNKNOWN"
+                ),
+                "warning": (
+                    statement.coverage.warning
+                    if statement.coverage else
+                    "Statement period could not be verified."
+                ),
+            })
+
+            integrity_records.append({
+                "source_file": statement.source_file,
+                "statement_id": statement.statement_id,
+                "score": (
+                    statement.integrity.score
+                    if statement.integrity else None
+                ),
+                "status": (
+                    statement.integrity.status
+                    if statement.integrity else "UNKNOWN"
+                ),
+                "page_count": statement.page_count,
+                "findings": (
+                    [
+                        {
+                            "code": finding.code,
+                            "severity": finding.severity.value,
+                            "message": finding.message,
+                            "evidence": finding.evidence,
+                        }
+                        for finding in statement.integrity.findings
+                    ]
+                    if statement.integrity else []
+                ),
+            })
+
+            if statement.credit_anchor is not None:
+                expected_credits += float(statement.credit_anchor)
+                anchor_count += 1
+
+            for diagnostic in statement.diagnostics:
+                st.session_state.diagnostic_log.append(
+                    f"{statement.source_file}: {diagnostic}"
+                )
+            if statement.integrity:
+                for finding in statement.integrity.findings:
+                    st.session_state.diagnostic_log.append(
+                        f"PDF integrity [{finding.severity.value}] "
+                        f"{statement.source_file} {finding.code}: "
+                        f"{finding.message}"
+                    )
+
+        for warning in pipeline_result.warnings:
+            st.session_state.diagnostic_log.append(f"Pipeline: {warning}")
+
+        st.session_state.expected_credits = expected_credits
+        st.session_state.statement_coverage = coverage_records
+        st.session_state.pdf_integrity_reports = integrity_records
+        st.session_state.mca_positions = [
+            {
+                "lender": position.lender,
+                "tier": position.tier,
+                "payment_amount": position.payment_amount,
+                "frequency": position.frequency,
+                "monthly_payment": position.monthly_payment,
+            }
+            for position in pipeline_result.mca_positions
+        ]
+
+        ledger_rows = []
+        for transaction in pipeline_result.transactions:
+            ledger_rows.append({
+                "transaction_id": transaction.transaction_id,
+                "statement_id": transaction.statement_id,
+                "source_file": transaction.source_file,
+                "source_page": transaction.source_page,
+                "date": transaction.date,
+                "month": transaction.date[:7],
+                "description": transaction.description,
+                "payer_or_source": transaction.description,
+                "amount": transaction.amount,
+                "tx_type": transaction.direction,
+                "category": transaction.category,
+                "classification_source": transaction.classification_source,
+                "classification_reason": transaction.classification_reason,
+                "classification_model": transaction.classification_model,
+                "needs_review": transaction.needs_review,
+                "is_revenue": transaction.is_true_revenue,
+            })
+
+        full_ledger_df = pd.DataFrame(ledger_rows)
+        st.session_state.full_ledger = full_ledger_df
+
+        if full_ledger_df.empty:
+            st.session_state.transactions = None
             st.error(
-                "No deposits were extracted. Check the Extraction diagnostics. "
-                "If the statement is scanned/image-only, OCR is required."
+                "No transactions were extracted. Review Extraction Diagnostics. "
+                "For scanned/image-only statements, enable OCR in the production API."
             )
         else:
-            status_text.info("Step 2/3: Applying Classifications...")
-            df = pd.DataFrame(all_deposits).reset_index(drop=True)
+            credit_df = full_ledger_df[
+                full_ledger_df["tx_type"] == "credit"
+            ].copy().reset_index(drop=True)
 
-            lineage_keys = [
-                "statement_id", "date", "amount", "description",
-                "tx_type", "source_page"
-            ]
-            df["_lineage_occurrence"] = df.groupby(
-                lineage_keys, dropna=False
-            ).cumcount()
-            df["transaction_id"] = df.apply(
-                lambda row: stable_transaction_id(
-                    statement_id=str(row["statement_id"]),
-                    transaction_date=str(row["date"]),
-                    description=str(row["description"]),
-                    amount=row["amount"],
-                    direction=str(row["tx_type"]),
-                    page=(
-                        int(row["source_page"])
-                        if pd.notna(row.get("source_page"))
-                        else None
-                    ),
-                    occurrence=int(row["_lineage_occurrence"]),
-                ),
-                axis=1,
-            )
-            df.drop(columns=["_lineage_occurrence"], inplace=True)
-
-            before_dedup = len(df)
-            df = df.drop_duplicates(
-                subset=[
-                    "statement_id", "date", "amount",
-                    "description", "tx_type", "source_page"
-                ]
-            ).reset_index(drop=True)
-
-            if before_dedup != len(df):
-                st.session_state.diagnostic_log.append(
-                    f"🧹 Removed {before_dedup - len(df)} duplicate transaction row(s)."
-                )
-
-            mca_positions = []
-            if all_mca_debits:
-                mca_df = pd.DataFrame(all_mca_debits).drop_duplicates(
-                    subset=[
-                        "statement_id", "date", "lender",
-                        "payment_amount", "source_page"
-                    ]
-                ).reset_index(drop=True)
-                mca_df["date"] = pd.to_datetime(mca_df["date"], errors="coerce")
-                mca_df = mca_df.dropna(subset=["date"])
-
-                for lender, group in mca_df.groupby("lender"):
-                    group = group.sort_values("date")
-                    tier = group["tier"].iloc[0]
-                    amt = group["payment_amount"].mode()[0] if not group.empty else 0
-
-                    if len(group) >= 2:
-                        median_days = group["date"].diff().dt.days.median()
-                        if median_days <= 2:
-                            freq = "Daily"
-                        elif median_days <= 5:
-                            freq = "2-3x Weekly"
-                        elif median_days <= 8:
-                            freq = "Weekly"
-                        elif median_days <= 15:
-                            freq = "Bi-Weekly"
-                        else:
-                            freq = "Monthly"
-                    else:
-                        freq = "Monthly"
-
-                    monthly_equiv = (
-                        amt * 21 if freq == "Daily"
-                        else amt * 9 if freq == "2-3x Weekly"
-                        else amt * 4.33 if freq == "Weekly"
-                        else amt * 2.16 if freq == "Bi-Weekly"
-                        else amt
-                    )
-
-                    mca_positions.append({
-                        "lender": lender,
-                        "tier": tier,
-                        "payment_amount": amt,
-                        "frequency": freq,
-                        "monthly_payment": monthly_equiv
-                    })
-
-            st.session_state.mca_positions = mca_positions
-
-            df["description_upper"] = df["description"].astype(str).str.upper()
-            rule_results = df.apply(
-                lambda row: v2_classify_by_rules(
-                    str(row["description"]),
-                    direction=str(row["tx_type"]),
-                ),
-                axis=1,
-            )
-            df["category"] = rule_results.apply(lambda result: result.category)
-            df["classification_source"] = rule_results.apply(
-                lambda result: "RULE" if result.category else "UNRESOLVED"
-            )
-            df["classification_reason"] = rule_results.apply(
-                lambda result: result.reason
-            )
-            df["classification_model"] = None
-            unresolved_mask = df["category"].isna()
-
-            if unresolved_mask.any() and client:
-                unresolved_rows = df.loc[
-                    unresolved_mask,
-                    [
-                        "transaction_id", "date", "description",
-                        "amount", "tx_type"
-                    ],
-                ].to_dict("records")
-
-                try:
-                    decisions = classify_unresolved_transactions(
-                        client=client,
-                        rows=unresolved_rows,
-                        model=CLASSIFIER_MODEL,
-                    )
-                    for row_idx in df.index[unresolved_mask]:
-                        transaction_id = str(df.at[row_idx, "transaction_id"])
-                        decision = decisions[transaction_id]
-                        df.at[row_idx, "category"] = decision.category
-                        df.at[row_idx, "classification_source"] = "AI"
-                        df.at[row_idx, "classification_reason"] = decision.reason
-                        df.at[row_idx, "classification_model"] = decision.model_name
-                except Exception as exc:
-                    st.session_state.diagnostic_log.append(
-                        f"AI classification failed closed to manual review: {exc}"
-                    )
-                    df.loc[unresolved_mask, "category"] = (
-                        "Review Required - Unidentified / Unusual Deposit"
-                    )
-                    df.loc[unresolved_mask, "classification_source"] = "FALLBACK"
-                    df.loc[unresolved_mask, "classification_reason"] = (
-                        "AI classification unavailable; manual review required."
-                    )
-            elif unresolved_mask.any():
-                df.loc[unresolved_mask, "category"] = (
-                    "Review Required - Unidentified / Unusual Deposit"
-                )
-                df.loc[unresolved_mask, "classification_source"] = "FALLBACK"
-                df.loc[unresolved_mask, "classification_reason"] = (
-                    "No AI client configured; manual review required."
-                )
-
-            df.drop(columns=["description_upper"], inplace=True)
-            df["is_revenue"] = False
-            df["needs_review"] = False
-
-            df.loc[
-                df["category"].str.startswith("True Revenue", na=False),
-                "is_revenue"
-            ] = True
-            df.loc[
-                df["category"].str.startswith("Review Required", na=False),
-                "needs_review"
-            ] = True
-
-            pos_pattern = (
-                r"STRIPE|SQUARE|SQ \*|MONERIS|CLOVER|FIRST DATA|FISERV|FDMS|ELAVON|"
-                r"GLOBAL PAY|CHASE MERCH|PAYMENTECH|HELCIM|TD MERCH|MONETICO|"
-                r"DESJARDINS PAIEMENT|LIGHTSPEED|SHOPIFY|ADYEN|BAMBORA|WORLDLINE|"
-                r"TOAST|NUVEI|PIVOTAL|PAYFACTO|ZETTLE|PAYPAL|KLARNA|AMAZON|"
-                r"UBER|DOORDASH|SKIPTHEDISHES|SKIP THE DISHES|MSP/DIV|MSP/ DIV|"
-                r"\b(?:VI|MC|EF|AMX)\d{4}\b"
-            )
-            pos_mask = df["description"].str.contains(
-                pos_pattern, case=False, na=False
-            )
-            df.loc[pos_mask, "category"] = "True Revenue - POS / Processor"
-            df.loc[pos_mask, "is_revenue"] = True
-            df.loc[pos_mask, "needs_review"] = False
-
-            wash_detected, wash_ref_count = detect_wash_pattern(df)
+            wash_detected, wash_ref_count = detect_wash_pattern(full_ledger_df)
             st.session_state["wash_detected_auto"] = wash_detected
             st.session_state["wash_ref_count"] = wash_ref_count
-
             if wash_detected:
                 st.session_state.diagnostic_log.append(
                     f"🚨 Wash/round-trip pattern detected: {wash_ref_count} "
-                    "matched debit/credit pairs sharing the same internal transfer reference."
+                    "matched debit/credit pairs sharing the same transfer reference."
                 )
 
-            st.session_state.transactions = df
+            st.session_state.transactions = credit_df
 
-            status_text.empty()
-            progress_bar.empty()
+            partial_count = sum(
+                1 for row in coverage_records
+                if row.get("status") == "PARTIAL"
+            )
+            unknown_count = sum(
+                1 for row in coverage_records
+                if row.get("status") == "UNKNOWN"
+            )
+            integrity_review_count = sum(
+                1 for row in integrity_records
+                if row.get("status") not in ("LOW_CONCERN", None)
+            )
 
-            expected_files = len(uploaded_files) - len(skipped_duplicate_files)
-            if anchor_source_count < expected_files:
+            if partial_count:
                 st.warning(
-                    "⚠️ Extraction completed, but one or more files did not "
+                    f"⚠️ {partial_count} partial statement(s) detected. Their "
+                    "transactions remain visible, while verified complete months "
+                    "are preferred for the underwriting revenue baseline."
+                )
+            if unknown_count:
+                st.info(
+                    f"ℹ️ Statement coverage could not be verified for "
+                    f"{unknown_count} file(s)."
+                )
+            if integrity_review_count:
+                st.warning(
+                    f"🛡️ {integrity_review_count} statement file(s) contain "
+                    "structural integrity signals requiring review. These signals "
+                    "are not proof of fraud."
+                )
+            if pipeline_result.skipped_duplicates:
+                st.warning(
+                    "⚠️ Duplicate uploads skipped: "
+                    + ", ".join(pipeline_result.skipped_duplicates)
+                )
+
+            if anchor_count < len(pipeline_result.statements):
+                st.warning(
+                    "⚠️ Extraction completed, but one or more statements did not "
                     "have a verifiable deposit-total anchor."
                 )
             else:
-                st.success("✅ Extraction complete.")
+                st.success("✅ Extraction and validation complete.")
+
+        status_text.empty()
+        progress_bar.empty()
+
     elif not uploaded_files:
         st.info("Upload one or more bank statement PDFs to begin.")
 
