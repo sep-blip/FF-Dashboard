@@ -8,6 +8,7 @@ export async function analyzeStatements(
   files: File[],
   options: {
     enableOcr: boolean;
+    enableVisionFallback: boolean;
     useAiClassifier: boolean;
   },
 ): Promise<StatementAnalysis> {
@@ -16,6 +17,10 @@ export async function analyzeStatements(
     body.append("files", file);
   }
   body.append("enable_ocr", String(options.enableOcr));
+  body.append(
+    "enable_vision_fallback",
+    String(options.enableVisionFallback),
+  );
   body.append("use_ai_classifier", String(options.useAiClassifier));
 
   const response = await fetch(
