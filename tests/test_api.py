@@ -147,3 +147,36 @@ def test_credit_report_endpoint_requires_openai_key(monkeypatch):
     )
     assert response.status_code == 503
     assert "OPENAI_API_KEY" in response.json()["detail"]
+
+
+def test_scorecard_endpoint_returns_versioned_score():
+    response = client.post(
+        "/v1/underwriting/scorecard",
+        json={
+            "average_monthly_true_revenue": 100000,
+            "revenue_trend_pct": 5,
+            "average_deposit_count": 25,
+            "revenue_volatility_pct": 12,
+            "average_daily_balance": 10000,
+            "mca_position_count": 1,
+            "mca_burden_pct": 8,
+            "borrowing_velocity": "0 in 90 Days",
+            "returned_ach_or_missed_payments": 0,
+            "negative_days": 1,
+            "time_in_business_months": 48,
+            "industry_score": 7,
+            "seasonality_score": 5,
+            "credit_score": 700,
+            "public_records": "Clean",
+            "bank_verification": "Original PDF",
+            "revenue_concentration_pct": 20,
+            "suspected_fraud": False,
+            "severe_wash_transactions": False,
+            "active_lender_default": False
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["policy_version"] == "ff-scorecard-v1"
+    assert body["max_score"] == 93
+    assert body["score"] > 0
