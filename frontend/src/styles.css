@@ -497,3 +497,75 @@ tr:last-child td {
     grid-template-columns: 1fr;
   }
 }
+
+.scorecard-feature-kpis,
+.scorecard-results {
+  margin-bottom: 16px;
+}
+
+.scorecard-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.scorecard-grid label {
+  display: grid;
+  gap: 7px;
+  color: #9da9ba;
+  font-size: 12px;
+}
+
+.scorecard-grid input,
+.scorecard-grid select {
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid #2d394c;
+  border-radius: 8px;
+  background: #0b1018;
+  color: #edf2fa;
+}
+
+.flag-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 12px 0 16px;
+}
+
+.flag-grid label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #bdc7d6;
+  font-size: 13px;
+}
+
+.score-breakdown {
+  margin-top: 14px;
+  border: 1px solid #202938;
+  border-radius: 9px;
+  padding: 12px;
+  background: #0b1018;
+}
+
+.score-breakdown summary {
+  cursor: pointer;
+  color: #c8d4e5;
+  font-weight: 700;
+  margin-bottom: 12px;
+}
+
+@media (max-width: 900px) {
+  .scorecard-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 600px) {
+  .scorecard-grid {
+    grid-template-columns: 1fr;
+  }
+}
