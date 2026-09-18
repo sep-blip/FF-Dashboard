@@ -411,6 +411,11 @@ export default function App() {
         coverageStatusByMonth: coverageStatusByMonth(analysis),
         monthlyDebtServiceByLender: monthlyDebt,
         readinessChecks,
+        averageDailyBalance:
+          analysis.features?.average_daily_balance || 0,
+        negativeDays: analysis.features?.negative_days || 0,
+        balanceObservedDays:
+          analysis.features?.balance_observed_days || 0,
       });
 
       setReviewResult(result);
