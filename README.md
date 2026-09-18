@@ -1,100 +1,191 @@
-## Forward Funding: Underwriting Engine
+# Forward Funding Underwriting Engine
 
-An automated, production-grade underwriting engine built for Merchant Cash Advance (MCA) risk assessment. This system utilizes a hybrid deterministic-probabilistic architecture to ingest raw bank statements, dynamically map columns, reconcile ledger math, classify revenue streams, and generate a comprehensive credit scorecard.
+A bank-statement underwriting workbench for merchant cash advance / small
+business funding. The V2 architecture is intentionally stateless: uploaded
+documents are analyzed in memory and the finished analysis can be downloaded
+as a self-contained JSON audit artifact.
 
----
+## Core principle
 
-## System Architecture & Layout
+The LLM does not calculate financial totals or funding amounts.
 
-The engine operates on a multi-layered pipeline, moving from raw document ingestion through dynamic spatial extraction, and finally into semantic AI classification and risk scoring.
+The system separates:
+
+- document extraction;
+- deterministic accounting controls;
+- transaction classification;
+- true-revenue calculations;
+- MCA/debt detection;
+- underwriting policy;
+- document-integrity review;
+- human review.
+
+## Pipeline
 
 ```text
-[ Document Input ] (Bank Statements & Credit Reports)
-        │
-        ▼
-[ Ingestion & Profiling Layer ]
-   ├─ FICO & Bureau Extractor (OpenAI GPT-4o-mini)
-   ├─ Multi-Entity Detector (Regex Account/Name Isolation)
-   └─ Hash-Based Deduplication (SHA-256 Byte-Level Dedup)
-        │
-        ▼
-[ Universal Dynamic Spatial Engine ] (pdfplumber)
-   ├─ Dynamic Header Hunting (Locates X-coordinates for Withdrawn/Deposited)
-   ├─ Strict Balance Cordoning (Prevents running balances from being extracted)
-   ├─ Line-by-Line Math Extraction (Row reconstruction)
-   └─ Date/Chronology Normalization
-        │
-        ▼
-[ Semantic Classification & Filtering Layer ]
-   ├─ Deterministic Pass 1: Wash/Round-Trip Detection
-   ├─ Deterministic Pass 2: POS Processors (Stripe, Klarna, PayPal, etc.)
-   ├─ Deterministic Pass 3: Gov/Tax/Insurance & NSF Reversals
-   └─ Probabilistic AI Pass: OpenAI GPT-4o-mini (Strict JSON Schema)
-        │
-        ▼
-[ Mathematical Reconciliation & Review ]
-   ├─ Automated Bank Summary Anchor Mapping
-   ├─ Interactive Underwriter Review Queue
-   └─ Bulk Toggle Category Overrides
-        │
-        ▼
-[ Scorecard & Offer Engine ]
-   ├─ Cash Flow Metrics (Avg True Revenue, Volatility, MCA Burden)
-   ├─ Risk Grading (A+ to E)
-   └─ Deal Structuring (Max Advance & Daily Payment Limits)
+PDF statements
+    |
+    v
+bank/template detection
+    |
+    v
+native positioned extraction
+    |
+    +--> positioned OCR fallback (English + French)
+    |
+    +--> guarded vision fallback for unreadable pages
+    |
+    v
+canonical transaction ledger
+    |
+    v
+balance reconciliation + extraction quality + document integrity
+    |
+    v
+rules-first classification
+    |
+    +--> structured AI classification for unresolved credits
+    |
+    v
+true revenue + MCA positions + debt ratios
+    |
+    v
+decision-readiness gate
+    |
+    v
+deterministic scorecard / funding-capacity scenarios
+```
 
-- Core Features
-Universal Dynamic Spatial Parser: Bypasses the need for hardcoded pixel ranges. The engine actively hunts for table headers ("Deposited", "Withdrawn", "Balance") on a per-page basis to construct temporary spatial grids, allowing it to easily read non-standard or wide-format printouts (like TD EasyWeb).
+## Reliability controls
 
-Running Balance Cordoning: Drops a rigid vertical wall immediately before the running balance column, preventing the engine from confusing active balances with massive customer deposits.
+- SHA-256 duplicate-file detection
+- stable statement and transaction IDs
+- page/source lineage for every extracted row
+- opening + credits - debits = closing reconciliation
+- partial-month detection without rejecting the statement
+- complete months preferred for underwriting revenue baselines
+- bank-template detection for major Canadian banks
+- deterministic extraction-quality score
+- composite statement-integrity review score
+- fail-closed treatment of unresolved deposits
+- vision/OCR-derived ledgers require additional review
+- private golden-statement regression harness
+- decision-readiness status: READY, REVIEW_REQUIRED, or BLOCKED
 
-Canadian POS & BNPL Recognition: Includes an extensive regex net that instantly categorizes Moneris, Stripe, Square, Klarna, Amazon, and PayPal deposits, as well as VI/MC card settlements, directly into "True Revenue" without expending LLM tokens.
+## Document extraction
 
-Automated Fraud & Wash Detection: Identifies recurring transfer signatures (e.g., TF 3978#1967-174) in both the credit and debit columns to catch account-kiting and artificial revenue inflation.
+V2 supports three extraction paths:
 
-Underwriter Triage UI: Features a review queue that isolates unidentified transactions, allowing underwriters to quickly flip unmapped deposits to True Revenue with a single checkbox.
+1. Native PDF positioned text
+2. Tesseract positioned OCR for scanned pages
+3. Vision-model fallback for pages native/OCR extraction cannot reliably read
 
-- Tech Stack
-Frontend & Routing: Streamlit
+Vision is a fallback, not a shortcut. Vision-derived transactions are still
+subject to reconciliation and are capped at a review-required extraction
+quality until validated.
 
-Data Processing: Pandas
+## Revenue classification
 
-Document Ingestion: pdfplumber
+Credits are categorized into classes including:
 
-Semantic Engine: OpenAI API (gpt-4o-mini)
+- True Revenue - POS / Processor
+- True Revenue - Verified Cash
+- True Revenue - Customer Payment / Cheque
+- True Revenue - B2B E-Transfer
+- Non-Revenue - Own-Account / Internal Transfer
+- Non-Revenue - MCA / Loan Proceeds
+- Non-Revenue - Refund / Reversal / NSF
+- Non-Revenue - Gov / Tax / Insurance Proceeds
+- Non-Revenue - Shareholder / Investment
+- Non-Revenue - Wash / Round-Trip Transfer
+- Review Required - Unidentified / Unusual Deposit
 
-Hashing & Logic: Python standard libraries (hashlib, re, difflib)
+Known rules run before AI classification.
 
--Installation & Setup
-Clone the repository:
+## Interfaces
 
-Bash
-git clone [https://github.com/yourusername/forward-funding-engine.git](https://github.com/yourusername/forward-funding-engine.git)
-cd forward-funding-engine
-Install the required dependencies:
-Ensure you have Python 3.9+ installed, then run:
+### React dashboard
 
-Bash
-pip install -r requirements.txt
-Configure your OpenAI API Key:
-The engine requires an active OpenAI API key to process ambiguous transactions and extract FICO scores. Create a hidden .streamlit/secrets.toml file in the root directory:
+The V2 React/Vite dashboard provides:
 
-Ini, TOML
-OPENAI_API_KEY = "sk-your-openai-api-key-here"
-Run the application:
+- multi-statement upload
+- OCR and vision fallback controls
+- statement coverage
+- extraction-quality score
+- document-integrity status
+- reconciliation status
+- MCA position table
+- true-revenue transaction review
+- decision-readiness warnings
+- deterministic funding-capacity scenarios
+- JSON audit download
 
-Bash
+### FastAPI
+
+Run:
+
+```bash
+uvicorn api.main:app --reload
+```
+
+Useful endpoints:
+
+- `GET /health`
+- `POST /v1/documents/bank-statements/analyze`
+- `POST /v1/underwriting/revenue-baseline`
+- `POST /v1/underwriting/funding-capacity`
+
+### Streamlit
+
+The original Streamlit workbench remains available while V2 is migrated:
+
+```bash
 streamlit run app.py
+```
 
--Usage Guide
-Upload Documents: Start by dropping up to 12 months of PDF bank statements and 1 PDF Credit Report into the primary ingestion blocks.
+## Local Docker stack
 
-Extract Bureau Data: Click Extract Credit Profile to automatically pull FICO scores, utilization percentages, and active collection counts.
+Create `.env` from `.env.example`, then:
 
-Run the Spatial Engine: Click Process Ledger to trigger the spatial extraction, classification, and reconciliation pipeline.
+```bash
+docker compose up --build
+```
 
-Reconcile: Verify the mathematical variance between the extracted ledger and the bank's summary anchors. If the variance is $0.00, proceed to review.
+Open:
 
-Classify: Navigate to the Interactive True Revenue Reconciliation table. Review the unclassified transactions and use the checkboxes to manually authorize them as revenue.
+- React dashboard: http://localhost:8080
+- API docs: http://localhost:8000/docs
 
-Structure the Deal: Open the Scorecard & Offer Engine tab, input the remaining manual fields (Time in Business, Verification status), and review the final algorithmic grade, suggested max advance, and affordable daily payment limit.
+No SQL database is required.
+
+## OpenAI key
+
+Set:
+
+```text
+OPENAI_API_KEY=...
+```
+
+Without an API key, native/OCR parsing and deterministic rules still work.
+Unresolved credits remain in manual review and vision fallback is unavailable.
+
+## Regression testing
+
+Real merchant statements should never be committed to Git.
+
+Maintain a private, redacted corpus under `regression_cases/` and run:
+
+```bash
+python tools/run_statement_regression.py regression_cases
+```
+
+See `docs/statement-regression.md`.
+
+## PD model
+
+The repository includes an XGBoost PD-model training/inference framework and
+SHAP explanation support, but intentionally does not ship a fabricated trained
+model. A credible PD model requires real historical performance labels and
+out-of-time validation before it can influence underwriting decisions.
+
+See `docs/pd-model.md`.

@@ -1,0 +1,26 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      TRANSACTION_CLASSIFIER_MODEL: ${TRANSACTION_CLASSIFIER_MODEL:-gpt-5.6-terra}
+      VISION_LEDGER_MODEL: ${VISION_LEDGER_MODEL:-gpt-5.6-terra}
+      CREDIT_REPORT_MODEL: ${CREDIT_REPORT_MODEL:-gpt-5.6-sol}
+      CORS_ORIGINS: http://localhost:8080,http://localhost:5173
+      MAX_STATEMENT_FILES: ${MAX_STATEMENT_FILES:-24}
+      MAX_PDF_BYTES: ${MAX_PDF_BYTES:-26214400}
+      MAX_PDF_PAGES: ${MAX_PDF_PAGES:-100}
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: http://localhost:8000
+    ports:
+      - "8080:80"
+    depends_on:
+      - api

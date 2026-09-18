@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Streamlit / secrets
+.streamlit/secrets.toml
+secrets.toml
+.env
+.env.*
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Generated model artifacts / local storage
+artifacts/
+var/uploads/
+
+# Private bank-statement regression corpus
+regression_cases/
