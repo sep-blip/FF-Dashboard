@@ -97,6 +97,7 @@ def test_review_recalculation_endpoint_applies_manual_override():
                 {
                     "transaction_id": "t1",
                     "date": "2026-08-01",
+                    "description": "CUSTOMER PAYMENT",
                     "amount": 10000,
                     "direction": "credit",
                     "category": "Review Required - Unidentified / Unusual Deposit",
