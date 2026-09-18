@@ -139,6 +139,7 @@ export type ReviewRecalculation = {
   monthly_true_revenue: Record<string, number>;
   revenue_baseline: RevenueBaseline;
   debt_ratios: DebtRatios;
+  features: UnderwritingFeatures;
   remaining_review_count: number;
   override_audit: Array<{
     transaction_id: string;
