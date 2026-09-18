@@ -1,22 +1,32 @@
 from __future__ import annotations
 
+import hashlib
 import os
 from dataclasses import asdict
 
-from fastapi import FastAPI, File, Form, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from openai import OpenAI
 
+from database.repository import (
+    DatabaseConfigurationError,
+    UnderwritingRepository,
+    connect_database,
+)
 from engine_v2.funding import FundingPolicy, calculate_funding_capacity
 from engine_v2.metrics import select_revenue_baseline
-from engine_v2.pipeline import analyze_statement_files
+from engine_v2.pipeline import UnderwritingPipelineResult, analyze_statement_files
+from storage.backends import storage_from_env
 
 from .schemas import (
+    ApplicationCreateRequest,
+    ApplicationCreateResponse,
     ClassifiedTransactionResponse,
     DebtRatioResponse,
     FundingCapacityRequest,
     FundingCapacityResponse,
     HealthResponse,
     McaPositionResponse,
+    PersistedStatementAnalysisResponse,
     RevenueBaselineRequest,
     RevenueBaselineResponse,
     StatementAnalysisResponse,
@@ -26,10 +36,11 @@ from .schemas import (
 
 app = FastAPI(
     title="Forward Funding Underwriting API",
-    version="0.2.0",
+    version="0.3.0",
     description=(
         "Underwriting services for statement ingestion, deterministic financial "
-        "calculations, transaction classification, and funding-capacity analysis."
+        "calculations, transaction classification, funding analysis, and "
+        "persistent application workflows."
     ),
 )
 
@@ -39,76 +50,21 @@ def _optional_openai_client() -> OpenAI | None:
     return OpenAI(api_key=api_key) if api_key else None
 
 
-@app.get("/health", response_model=HealthResponse)
-def health() -> HealthResponse:
-    return HealthResponse(status="ok", service="underwriting-api")
-
-
-@app.post(
-    "/v1/underwriting/revenue-baseline",
-    response_model=RevenueBaselineResponse,
-)
-def revenue_baseline(payload: RevenueBaselineRequest) -> RevenueBaselineResponse:
-    result = select_revenue_baseline(
-        monthly_true_revenue=payload.monthly_true_revenue,
-        coverage_status_by_month=payload.coverage_status_by_month,
-    )
-    return RevenueBaselineResponse(
-        average_monthly_true_revenue=result.average_monthly_true_revenue,
-        months_used=list(result.months_used),
-        partial_months_excluded=list(result.partial_months_excluded),
-        basis=result.basis,
-        warning=result.warning,
-    )
-
-
-@app.post(
-    "/v1/underwriting/funding-capacity",
-    response_model=FundingCapacityResponse,
-)
-def funding_capacity(payload: FundingCapacityRequest) -> FundingCapacityResponse:
-    policy = FundingPolicy(**payload.policy.model_dump())
-    result = calculate_funding_capacity(
-        average_monthly_true_revenue=payload.average_monthly_true_revenue,
-        existing_monthly_debt_service=payload.existing_monthly_debt_service,
-        policy=policy,
-    )
-    return FundingCapacityResponse(**asdict(result))
-
-
-@app.post(
-    "/v1/documents/bank-statements/analyze",
-    response_model=StatementAnalysisResponse,
-)
-async def analyze_bank_statements(
-    files: list[UploadFile] = File(...),
-    enable_ocr: bool = Form(False),
-    use_ai_classifier: bool = Form(True),
-) -> StatementAnalysisResponse:
-    """Analyze one or more bank-statement PDFs.
-
-    The endpoint remains useful without an OpenAI key: deterministic rules and
-    financial calculations still run, while unresolved credits are routed to
-    manual review. When an API key is configured, only unresolved credits are
-    sent to the structured AI classifier.
-    """
-
-    upload_payload: list[tuple[str, bytes]] = []
+async def _read_uploads(files: list[UploadFile]) -> list[tuple[str, bytes]]:
+    payloads: list[tuple[str, bytes]] = []
     for upload in files:
-        payload = await upload.read()
-        upload_payload.append((upload.filename or "statement.pdf", payload))
+        payloads.append(
+            (
+                upload.filename or "statement.pdf",
+                await upload.read(),
+            )
+        )
+    return payloads
 
-    client = _optional_openai_client() if use_ai_classifier else None
-    result = analyze_statement_files(
-        files=upload_payload,
-        ai_client=client,
-        classifier_model=os.getenv(
-            "TRANSACTION_CLASSIFIER_MODEL",
-            "gpt-5.6-terra",
-        ),
-        enable_ocr=enable_ocr,
-    )
 
+def _analysis_response(
+    result: UnderwritingPipelineResult,
+) -> StatementAnalysisResponse:
     statements = []
     for statement in result.statements:
         statements.append(
@@ -217,4 +173,160 @@ async def analyze_bank_statements(
         debt_ratios=debt_ratios,
         skipped_duplicates=result.skipped_duplicates,
         warnings=result.warnings,
+    )
+
+
+def _run_statement_analysis(
+    payloads: list[tuple[str, bytes]],
+    *,
+    enable_ocr: bool,
+    use_ai_classifier: bool,
+) -> UnderwritingPipelineResult:
+    client = _optional_openai_client() if use_ai_classifier else None
+    return analyze_statement_files(
+        files=payloads,
+        ai_client=client,
+        classifier_model=os.getenv(
+            "TRANSACTION_CLASSIFIER_MODEL",
+            "gpt-5.6-terra",
+        ),
+        enable_ocr=enable_ocr,
+    )
+
+
+@app.get("/health", response_model=HealthResponse)
+def health() -> HealthResponse:
+    return HealthResponse(status="ok", service="underwriting-api")
+
+
+@app.post(
+    "/v1/applications",
+    response_model=ApplicationCreateResponse,
+)
+def create_application(
+    payload: ApplicationCreateRequest,
+) -> ApplicationCreateResponse:
+    try:
+        with connect_database() as connection:
+            repository = UnderwritingRepository(connection)
+            merchant_id, application_id = repository.create_application(
+                legal_name=payload.legal_name,
+                dba_name=payload.dba_name,
+                industry_code=payload.industry_code,
+                requested_amount=payload.requested_amount,
+                requested_term_business_days=(
+                    payload.requested_term_business_days
+                ),
+            )
+    except DatabaseConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    return ApplicationCreateResponse(
+        merchant_id=str(merchant_id),
+        application_id=str(application_id),
+    )
+
+
+@app.post(
+    "/v1/underwriting/revenue-baseline",
+    response_model=RevenueBaselineResponse,
+)
+def revenue_baseline(payload: RevenueBaselineRequest) -> RevenueBaselineResponse:
+    result = select_revenue_baseline(
+        monthly_true_revenue=payload.monthly_true_revenue,
+        coverage_status_by_month=payload.coverage_status_by_month,
+    )
+    return RevenueBaselineResponse(
+        average_monthly_true_revenue=result.average_monthly_true_revenue,
+        months_used=list(result.months_used),
+        partial_months_excluded=list(result.partial_months_excluded),
+        basis=result.basis,
+        warning=result.warning,
+    )
+
+
+@app.post(
+    "/v1/underwriting/funding-capacity",
+    response_model=FundingCapacityResponse,
+)
+def funding_capacity(payload: FundingCapacityRequest) -> FundingCapacityResponse:
+    policy = FundingPolicy(**payload.policy.model_dump())
+    result = calculate_funding_capacity(
+        average_monthly_true_revenue=payload.average_monthly_true_revenue,
+        existing_monthly_debt_service=payload.existing_monthly_debt_service,
+        policy=policy,
+    )
+    return FundingCapacityResponse(**asdict(result))
+
+
+@app.post(
+    "/v1/documents/bank-statements/analyze",
+    response_model=StatementAnalysisResponse,
+)
+async def analyze_bank_statements(
+    files: list[UploadFile] = File(...),
+    enable_ocr: bool = Form(False),
+    use_ai_classifier: bool = Form(True),
+) -> StatementAnalysisResponse:
+    """Analyze statements without requiring database or object storage."""
+    payloads = await _read_uploads(files)
+    result = _run_statement_analysis(
+        payloads,
+        enable_ocr=enable_ocr,
+        use_ai_classifier=use_ai_classifier,
+    )
+    return _analysis_response(result)
+
+
+@app.post(
+    "/v1/applications/{application_id}/bank-statements/analyze-and-save",
+    response_model=PersistedStatementAnalysisResponse,
+)
+async def analyze_and_save_bank_statements(
+    application_id: str,
+    files: list[UploadFile] = File(...),
+    enable_ocr: bool = Form(False),
+    use_ai_classifier: bool = Form(True),
+) -> PersistedStatementAnalysisResponse:
+    """Durably store, analyze, and persist a batch of bank statements."""
+
+    payloads = await _read_uploads(files)
+    result = _run_statement_analysis(
+        payloads,
+        enable_ocr=enable_ocr,
+        use_ai_classifier=use_ai_classifier,
+    )
+
+    storage = storage_from_env()
+    storage_uri_by_sha256: dict[str, str] = {}
+    for filename, payload in payloads:
+        sha = hashlib.sha256(payload).hexdigest()
+        stored = storage.put_bytes(
+            key=(
+                f"applications/{application_id}/bank-statements/"
+                f"{sha}.pdf"
+            ),
+            payload=payload,
+            content_type="application/pdf",
+        )
+        storage_uri_by_sha256[sha] = stored.uri
+
+    try:
+        with connect_database() as connection:
+            repository = UnderwritingRepository(connection)
+            repository.persist_statement_analysis(
+                application_id=application_id,
+                result=result,
+                storage_uri_by_sha256=storage_uri_by_sha256,
+            )
+    except DatabaseConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    response = _analysis_response(result)
+    return PersistedStatementAnalysisResponse(
+        **response.model_dump(),
+        application_id=application_id,
+        persisted=True,
     )
