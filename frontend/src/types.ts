@@ -87,6 +87,24 @@ export type AuditManifest = {
   }>;
 };
 
+export type ReviewRecalculation = {
+  categories_by_transaction: Record<string, string>;
+  needs_review_by_transaction: Record<string, boolean>;
+  monthly_true_revenue: Record<string, number>;
+  revenue_baseline: RevenueBaseline;
+  debt_ratios: DebtRatios;
+  remaining_review_count: number;
+  override_audit: Array<{
+    transaction_id: string;
+    previous_category: string;
+    new_category: string;
+    reason: string;
+  }>;
+  readiness_status: string;
+  automated_offer_allowed: boolean;
+  readiness_checks: Record<string, string>;
+};
+
 export type FundingCapacity = {
   max_by_revenue: number;
   max_by_debt_capacity: number;
