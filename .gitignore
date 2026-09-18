@@ -19,3 +19,6 @@ secrets.toml
 # Generated model artifacts / local storage
 artifacts/
 var/uploads/
+
+# Private bank-statement regression corpus
+regression_cases/
