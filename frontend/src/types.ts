@@ -72,6 +72,9 @@ export type UnderwritingFeatures = {
   median_deposit: number;
   largest_deposit: number;
   returned_payment_count: number;
+  average_daily_balance: number;
+  negative_days: number;
+  balance_observed_days: number;
   mca_position_count: number;
   monthly_mca_debt_service: number;
   mca_burden_pct: number;
