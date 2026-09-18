@@ -9,6 +9,7 @@ from .audit_manifest import AuditManifest, build_audit_manifest
 from .batch_ingestion import BatchIngestionResult, parse_statement_batch
 from .classification import classify_by_rules
 from .constants import REVIEW_REQUIRED
+from .features import UnderwritingFeatures, calculate_underwriting_features
 from .mca import McaPosition, aggregate_positions
 from .metrics import DebtRatioMetrics, RevenueBaseline, calculate_debt_ratios, select_revenue_baseline
 from .models import TransactionDirection
@@ -45,6 +46,7 @@ class UnderwritingPipelineResult:
     monthly_true_revenue: dict[str, float] = field(default_factory=dict)
     revenue_baseline: RevenueBaseline | None = None
     debt_ratios: DebtRatioMetrics | None = None
+    features: UnderwritingFeatures | None = None
     decision_readiness: DecisionReadiness | None = None
     audit_manifest: AuditManifest | None = None
     skipped_duplicates: list[str] = field(default_factory=list)
@@ -277,6 +279,26 @@ def analyze_statement_files(
             else 0.0
         ),
         monthly_debt_service_by_lender=monthly_debt,
+    )
+
+    result.features = calculate_underwriting_features(
+        transactions=result.transactions,
+        monthly_true_revenue=result.monthly_true_revenue,
+        baseline_months=(
+            result.revenue_baseline.months_used
+            if result.revenue_baseline
+            else ()
+        ),
+        average_monthly_true_revenue=(
+            result.revenue_baseline.average_monthly_true_revenue
+            if result.revenue_baseline
+            else 0.0
+        ),
+        mca_position_count=len(result.mca_positions),
+        monthly_mca_debt_service=(
+            result.debt_ratios.total_monthly_debt_service
+            if result.debt_ratios else 0.0
+        ),
     )
 
     result.decision_readiness = assess_decision_readiness(
