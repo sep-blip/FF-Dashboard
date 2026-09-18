@@ -16,6 +16,7 @@ def _transactions():
         ReviewedTransaction(
             transaction_id="t1",
             date="2026-08-01",
+            description="CUSTOMER PAYMENT",
             amount=10000,
             direction="credit",
             category="Review Required - Unidentified / Unusual Deposit",
@@ -24,6 +25,7 @@ def _transactions():
         ReviewedTransaction(
             transaction_id="t2",
             date="2026-08-02",
+            description="INTERNAL TRANSFER",
             amount=5000,
             direction="credit",
             category=NON_REVENUE_INTERNAL,
@@ -58,6 +60,8 @@ def test_override_recalculates_true_revenue_and_readiness():
 
     assert result.monthly_true_revenue["2026-08"] == 10000
     assert result.remaining_review_count == 0
+    assert result.features is not None
+    assert result.features.average_monthly_true_revenue == 10000
     assert result.readiness_status == "READY"
     assert result.automated_offer_allowed
 
