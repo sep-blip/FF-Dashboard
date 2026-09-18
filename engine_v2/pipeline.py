@@ -8,13 +8,14 @@ from .ai_classifier import classify_unresolved_transactions
 from .audit_manifest import AuditManifest, build_audit_manifest
 from .batch_ingestion import BatchIngestionResult, parse_statement_batch
 from .classification import classify_by_rules
-from .constants import REVIEW_REQUIRED
+from .constants import NON_REVENUE_WASH, REVIEW_REQUIRED
 from .features import UnderwritingFeatures, calculate_underwriting_features
 from .mca import McaPosition, aggregate_positions
 from .metrics import DebtRatioMetrics, RevenueBaseline, calculate_debt_ratios, select_revenue_baseline
 from .models import TransactionDirection
 from .readiness import DecisionReadiness, assess_decision_readiness
 from .statement_parser import ParsedStatement
+from .wash import detect_explicit_round_trips
 
 
 @dataclass
@@ -131,6 +132,23 @@ def analyze_statement_files(
     unresolved_payload: list[dict] = []
     pending_by_id: dict[str, ClassifiedTransaction] = {}
 
+    raw_transactions = [
+        transaction
+        for statement in batch.statements
+        for transaction in statement.transactions
+    ]
+    wash_matches = detect_explicit_round_trips(raw_transactions)
+    wash_credit_ids = {
+        match.credit_transaction_id
+        for match in wash_matches
+    }
+    if wash_matches:
+        result.warnings.append(
+            f"Detected {len(wash_matches)} explicit round-trip transfer "
+            "pair(s) with matching references and amounts. Matching credits "
+            "were excluded from true revenue."
+        )
+
     for statement in batch.statements:
         effective_integrity = statement.composite_integrity or statement.integrity
         if effective_integrity and effective_integrity.status != "LOW_CONCERN":
@@ -167,6 +185,26 @@ def analyze_statement_files(
                     category="Debit / Cash Outflow",
                     classification_source="SYSTEM",
                     classification_reason="Debit transaction; not evaluated as revenue.",
+                )
+                result.transactions.append(classification)
+                continue
+
+            if txn.transaction_id in wash_credit_ids:
+                classification = ClassifiedTransaction(
+                    transaction_id=txn.transaction_id,
+                    statement_id=txn.statement_id,
+                    source_file=txn.source_file,
+                    source_page=txn.page,
+                    date=txn.transaction_date.isoformat(),
+                    description=txn.description,
+                    amount=float(txn.amount),
+                    direction=txn.direction.value,
+                    category=NON_REVENUE_WASH,
+                    classification_source="RULE",
+                    classification_reason=(
+                        "Matched a debit round trip with the same explicit "
+                        "transfer reference and amount."
+                    ),
                 )
                 result.transactions.append(classification)
                 continue
