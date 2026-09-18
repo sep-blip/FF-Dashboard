@@ -369,6 +369,7 @@ def recalculate_reviewed_transactions(
                 ReviewedTransaction(
                     transaction_id=transaction.transaction_id,
                     date=transaction.date,
+                    description=transaction.description,
                     amount=transaction.amount,
                     direction=transaction.direction,
                     category=transaction.category,
@@ -419,6 +420,9 @@ def recalculate_reviewed_transactions(
             individual_ratios_pct=(
                 result.debt_ratios.individual_ratios_pct
             ),
+        ),
+        features=UnderwritingFeaturesResponse(
+            **asdict(result.features)
         ),
         remaining_review_count=result.remaining_review_count,
         override_audit=[
