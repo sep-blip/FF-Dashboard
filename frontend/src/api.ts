@@ -3,6 +3,7 @@ import type {
   CreditProfile,
   FundingCapacity,
   ReviewRecalculation,
+  ScorecardResult,
   StatementAnalysis,
 } from "./types";
 
@@ -164,4 +165,69 @@ export async function analyzeCreditReport(
   }
 
   return response.json() as Promise<CreditProfile>;
+}
+
+
+export async function calculateScorecard(input: {
+  averageMonthlyTrueRevenue: number;
+  revenueTrendPct: number;
+  averageDepositCount: number;
+  revenueVolatilityPct: number;
+  averageDailyBalance: number;
+  mcaPositionCount: number;
+  mcaBurdenPct: number;
+  borrowingVelocity: string;
+  returnedAchOrMissedPayments: number;
+  negativeDays: number;
+  timeInBusinessMonths: number;
+  industryScore: number;
+  seasonalityScore: number;
+  creditScore: number;
+  publicRecords: string;
+  bankVerification: string;
+  revenueConcentrationPct: number;
+  suspectedFraud: boolean;
+  severeWashTransactions: boolean;
+  activeLenderDefault: boolean;
+}): Promise<ScorecardResult> {
+  const response = await fetch(
+    `${API_BASE_URL}/v1/underwriting/scorecard`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        average_monthly_true_revenue: input.averageMonthlyTrueRevenue,
+        revenue_trend_pct: input.revenueTrendPct,
+        average_deposit_count: input.averageDepositCount,
+        revenue_volatility_pct: input.revenueVolatilityPct,
+        average_daily_balance: input.averageDailyBalance,
+        mca_position_count: input.mcaPositionCount,
+        mca_burden_pct: input.mcaBurdenPct,
+        borrowing_velocity: input.borrowingVelocity,
+        returned_ach_or_missed_payments:
+          input.returnedAchOrMissedPayments,
+        negative_days: input.negativeDays,
+        time_in_business_months: input.timeInBusinessMonths,
+        industry_score: input.industryScore,
+        seasonality_score: input.seasonalityScore,
+        credit_score: input.creditScore,
+        public_records: input.publicRecords,
+        bank_verification: input.bankVerification,
+        revenue_concentration_pct: input.revenueConcentrationPct,
+        suspected_fraud: input.suspectedFraud,
+        severe_wash_transactions: input.severeWashTransactions,
+        active_lender_default: input.activeLenderDefault,
+      }),
+    },
+  );
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null);
+    throw new Error(
+      payload?.detail ||
+        `Scorecard calculation failed with HTTP ${response.status}`,
+    );
+  }
+
+  return response.json() as Promise<ScorecardResult>;
 }
