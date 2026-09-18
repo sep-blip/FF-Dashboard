@@ -734,16 +734,19 @@ with tab1:
                 ),
             })
 
+            effective_integrity = (
+                statement.composite_integrity or statement.integrity
+            )
             integrity_records.append({
                 "source_file": statement.source_file,
                 "statement_id": statement.statement_id,
                 "score": (
-                    statement.integrity.score
-                    if statement.integrity else None
+                    effective_integrity.score
+                    if effective_integrity else None
                 ),
                 "status": (
-                    statement.integrity.status
-                    if statement.integrity else "UNKNOWN"
+                    effective_integrity.status
+                    if effective_integrity else "UNKNOWN"
                 ),
                 "page_count": statement.page_count,
                 "findings": (
@@ -754,9 +757,9 @@ with tab1:
                             "message": finding.message,
                             "evidence": finding.evidence,
                         }
-                        for finding in statement.integrity.findings
+                        for finding in effective_integrity.findings
                     ]
-                    if statement.integrity else []
+                    if effective_integrity else []
                 ),
             })
 
